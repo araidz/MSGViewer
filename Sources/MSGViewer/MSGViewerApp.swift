@@ -59,6 +59,7 @@ private func inspect(_ path: String) throws {
     print("Recipients: \(message.recipientCount)")
     print("HTML body: \(message.htmlBody.map { "yes (\($0.utf8.count) bytes)" } ?? "no")")
     print("RTF body: \(message.rtfBody.map { "yes (\($0.utf8.count) bytes decompressed)" } ?? "no")")
+    print("RTF kind: \(message.rtfBody?.contains("\\fromhtml") == true ? "encapsulated HTML" : "native RTF")")
     print("Plain body: \(message.plainBody.map { "yes (\($0.count) characters)" } ?? "no")")
     print("Attachments: \(message.attachments.count) (\(attachmentBytes) bytes, \(message.attachments.filter(\.isEmbeddedMessage).count) embedded messages)")
 }

@@ -41,6 +41,7 @@ struct MSGParser: Sendable {
         let root = rootIndex
         let recipientFolders = try file.children(of: root).filter { $0.1.name.hasPrefix("__recip_version1.0_#") }
         let attachmentFolders = try file.children(of: root).filter { $0.1.name.hasPrefix("__attach_version1.0_#") }
+        let rtfData = try rtfProperty(in: root)
 
         let attachments = try attachmentFolders.map { index, _ in
             let embeddedName = "__substg1.0_3701000D"
@@ -69,8 +70,8 @@ struct MSGParser: Sendable {
             cc: try stringProperty(id: "0E03", in: root),
             recipientCount: recipientFolders.count,
             plainBody: try stringProperty(id: "1000", in: root),
-            htmlBody: try htmlProperty(in: root),
-            rtfBody: try rtfProperty(in: root),
+            htmlBody: try htmlProperty(in: root) ?? rtfData.flatMap(RTFHTMLExtractor.extract),
+            rtfBody: clean(rtfData.flatMap { String(data: $0, encoding: .windowsCP1252) }),
             attachments: attachments
         )
     }
@@ -117,9 +118,9 @@ struct MSGParser: Sendable {
         return clean(String(data: data, encoding: .utf8) ?? String(data: data, encoding: .windowsCP1252))
     }
 
-    private func rtfProperty(in parent: Int) throws -> String? {
+    private func rtfProperty(in parent: Int) throws -> Data? {
         guard let (_, entry) = try propertyEntry(id: "1009", types: ["0102"], in: parent) else { return nil }
-        return clean(String(data: try CompressedRTF.decompress(file.stream(entry)), encoding: .windowsCP1252))
+        return try CompressedRTF.decompress(file.stream(entry))
     }
 
     private func messageDate(in parent: Int) throws -> Date? {
