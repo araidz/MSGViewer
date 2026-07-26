@@ -16,14 +16,22 @@ final class MessageStore: ObservableObject {
     @Published private(set) var messages: [LoadedMessage] = []
     @Published private(set) var isLoading = false
     @Published var error: String?
+    @Published var selectedAttachmentID: MessageSummary.Attachment.ID?
     private let temporaryDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("MSGViewer", isDirectory: true)
     private let preview = AttachmentPreviewController()
+    private var keyMonitor: Any?
 
     var message: LoadedMessage? { messages.last }
     var canGoBack: Bool { messages.count > 1 }
 
     private init() {
         cleanupTemporaryFiles()
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 49,
+                  event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty else { return event }
+            let handled = MainActor.assumeIsolated { self?.previewSelectedAttachment() == true }
+            return handled ? nil : event
+        }
     }
 
     func showOpenPanel() {
@@ -48,6 +56,7 @@ final class MessageStore: ObservableObject {
                     return LoadedMessage(url: url, displayName: url.lastPathComponent, parser: parser, summary: try parser.parse())
                 }.value
                 messages = [loaded]
+                selectedAttachmentID = loaded.summary.attachments.first?.id
                 NSDocumentController.shared.noteNewRecentDocumentURL(url)
             } catch {
                 self.error = error.localizedDescription
@@ -99,6 +108,15 @@ final class MessageStore: ObservableObject {
         }
     }
 
+    private func previewSelectedAttachment() -> Bool {
+        guard let message,
+              let selectedAttachmentID,
+              let attachment = message.summary.attachments.first(where: { $0.id == selectedAttachmentID }),
+              !attachment.isEmbeddedMessage else { return false }
+        preview(attachment)
+        return true
+    }
+
     func openAttachment(_ attachment: MessageSummary.Attachment) {
         do {
             NSWorkspace.shared.open(try temporaryFile(for: attachment))
@@ -126,13 +144,17 @@ final class MessageStore: ObservableObject {
                 parser: parser,
                 summary: try parser.parse()
             ))
+            selectedAttachmentID = messages.last?.summary.attachments.first?.id
         } catch {
             self.error = "Could not open attached message: \(error.localizedDescription)"
         }
     }
 
     func goBack() {
-        if canGoBack { messages.removeLast() }
+        if canGoBack {
+            messages.removeLast()
+            selectedAttachmentID = messages.last?.summary.attachments.first?.id
+        }
     }
 
     func cleanupTemporaryFiles() {

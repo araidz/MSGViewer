@@ -58,12 +58,11 @@ private struct RTFView: NSViewRepresentable {
         if isDark {
             let range = NSRange(location: 0, length: readable.length)
             readable.removeAttribute(.backgroundColor, range: range)
-            readable.enumerateAttribute(.foregroundColor, in: range) { color, range, _ in
-                guard let color = color as? NSColor,
-                      let rgb = color.usingColorSpace(.deviceRGB),
-                      0.2126 * rgb.redComponent + 0.7152 * rgb.greenComponent + 0.0722 * rgb.blueComponent < 0.4 else { return }
-                readable.addAttribute(.foregroundColor, value: NSColor.labelColor, range: range)
-            }
+            readable.addAttribute(
+                .foregroundColor,
+                value: NSColor(calibratedWhite: 0.9, alpha: 1),
+                range: range
+            )
         }
         context.coordinator.rtf = rtf
         context.coordinator.isDark = isDark

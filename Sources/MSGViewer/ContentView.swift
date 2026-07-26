@@ -12,6 +12,7 @@ struct ContentView: View {
             } else if let loaded = store.message {
                 MessageView(
                     loaded: loaded,
+                    selectedAttachmentID: $store.selectedAttachmentID,
                     canGoBack: store.canGoBack,
                     goBack: store.goBack,
                     save: store.save,
@@ -55,6 +56,7 @@ struct ContentView: View {
 
 private struct MessageView: View {
     let loaded: LoadedMessage
+    @Binding var selectedAttachmentID: MessageSummary.Attachment.ID?
     let canGoBack: Bool
     let goBack: () -> Void
     let save: (MessageSummary.Attachment) -> Void
@@ -63,7 +65,7 @@ private struct MessageView: View {
     let open: (MessageSummary.Attachment) -> Void
     let itemProvider: (MessageSummary.Attachment) -> NSItemProvider
     let openEmbedded: (MessageSummary.Attachment) -> Void
-    @State private var selectedAttachmentID: MessageSummary.Attachment.ID?
+    @FocusState private var attachmentsFocused: Bool
 
     var body: some View {
         HSplitView {
@@ -124,18 +126,17 @@ private struct MessageView: View {
                             preview: { preview(attachment) },
                             open: { open(attachment) },
                             itemProvider: { itemProvider(attachment) },
-                            openEmbedded: { openEmbedded(attachment) }
+                            openEmbedded: { openEmbedded(attachment) },
+                            select: {
+                                selectedAttachmentID = attachment.id
+                                attachmentsFocused = true
+                            }
                         )
                         .tag(attachment.id)
                     }
                     .listStyle(.inset)
-                    .onKeyPress(.space) {
-                        guard let id = selectedAttachmentID,
-                              let attachment = loaded.summary.attachments.first(where: { $0.id == id }),
-                              !attachment.isEmbeddedMessage else { return .ignored }
-                        preview(attachment)
-                        return .handled
-                    }
+                    .focusable()
+                    .focused($attachmentsFocused)
                 }
             }
             .padding(14)
@@ -157,6 +158,7 @@ private struct AttachmentRow: View {
     let open: () -> Void
     let itemProvider: () -> NSItemProvider
     let openEmbedded: () -> Void
+    let select: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
@@ -191,6 +193,7 @@ private struct AttachmentRow: View {
         .padding(.vertical, 4)
         .contentShape(Rectangle())
         .onTapGesture(count: 2, perform: attachment.isEmbeddedMessage ? openEmbedded : open)
+        .simultaneousGesture(TapGesture().onEnded(select))
         .onDrag { attachment.isEmbeddedMessage ? NSItemProvider() : itemProvider() }
         .contextMenu {
             if attachment.isEmbeddedMessage {
