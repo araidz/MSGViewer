@@ -41,6 +41,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         MessageStore.shared.cleanupTemporaryFiles()
     }
+
+    func applicationShouldSaveApplicationState(_ sender: NSApplication) -> Bool { false }
+    func applicationShouldRestoreApplicationState(_ sender: NSApplication) -> Bool { false }
 }
 
 private func inspect(_ path: String) throws {

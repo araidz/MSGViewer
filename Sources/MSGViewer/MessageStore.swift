@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 @preconcurrency import QuickLookUI
+import UniformTypeIdentifiers
 
 struct LoadedMessage: Sendable {
     let url: URL
@@ -126,12 +127,29 @@ final class MessageStore: ObservableObject {
     }
 
     func itemProvider(for attachment: MessageSummary.Attachment) -> NSItemProvider {
-        do {
-            return NSItemProvider(contentsOf: try temporaryFile(for: attachment)) ?? NSItemProvider()
-        } catch {
-            self.error = "Could not export \(attachment.name): \(error.localizedDescription)"
-            return NSItemProvider()
+        let provider = NSItemProvider()
+        provider.suggestedName = safeFilename(attachment.name)
+        guard let message else { return provider }
+        let type = UTType(filenameExtension: (attachment.name as NSString).pathExtension) ?? .data
+        let directory = temporaryDirectory
+        let filename = safeFilename(attachment.name)
+        let parser = message.parser
+
+        provider.registerFileRepresentation(forTypeIdentifier: type.identifier, fileOptions: [], visibility: .all) { completion in
+            Task.detached {
+                do {
+                    let folder = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+                    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                    let url = folder.appendingPathComponent(filename)
+                    try parser.data(for: attachment).write(to: url, options: .atomic)
+                    completion(url, false, nil)
+                } catch {
+                    completion(nil, false, error)
+                }
+            }
+            return nil
         }
+        return provider
     }
 
     func openEmbedded(_ attachment: MessageSummary.Attachment) {
