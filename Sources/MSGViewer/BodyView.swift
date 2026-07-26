@@ -4,12 +4,13 @@ import WebKit
 
 struct BodyView: View {
     let message: MessageSummary
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         if let html = message.htmlBody {
             OfflineHTMLView(html: html)
         } else if let rtf = message.rtfBody {
-            RTFView(rtf: rtf)
+            RTFView(rtf: rtf, isDark: colorScheme == .dark)
         } else {
             ScrollView {
                 Text(message.plainBody ?? "No message body")
@@ -23,6 +24,9 @@ struct BodyView: View {
 
 private struct RTFView: NSViewRepresentable {
     let rtf: String
+    let isDark: Bool
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
@@ -42,14 +46,33 @@ private struct RTFView: NSViewRepresentable {
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? NSTextView,
+        guard context.coordinator.rtf != rtf || context.coordinator.isDark != isDark,
+              let textView = scrollView.documentView as? NSTextView,
               let data = rtf.data(using: .windowsCP1252),
               let value = try? NSAttributedString(
                 data: data,
                 options: [.documentType: NSAttributedString.DocumentType.rtf],
                 documentAttributes: nil
-              ), textView.textStorage?.isEqual(to: value) != true else { return }
-        textView.textStorage?.setAttributedString(value)
+              ) else { return }
+        let readable = NSMutableAttributedString(attributedString: value)
+        if isDark {
+            let range = NSRange(location: 0, length: readable.length)
+            readable.removeAttribute(.backgroundColor, range: range)
+            readable.enumerateAttribute(.foregroundColor, in: range) { color, range, _ in
+                guard let color = color as? NSColor,
+                      let rgb = color.usingColorSpace(.deviceRGB),
+                      0.2126 * rgb.redComponent + 0.7152 * rgb.greenComponent + 0.0722 * rgb.blueComponent < 0.4 else { return }
+                readable.addAttribute(.foregroundColor, value: NSColor.labelColor, range: range)
+            }
+        }
+        context.coordinator.rtf = rtf
+        context.coordinator.isDark = isDark
+        textView.textStorage?.setAttributedString(readable)
+    }
+
+    final class Coordinator {
+        var rtf: String?
+        var isDark: Bool?
     }
 }
 
@@ -72,7 +95,7 @@ private struct OfflineHTMLView: NSViewRepresentable {
         guard context.coordinator.html != html else { return }
         context.coordinator.html = html
         let policy = "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; img-src data:\">"
-        let style = "<style>html{color-scheme:light dark}body{font:14px -apple-system;padding:18px;line-height:1.45;margin:0}table{max-width:100%;border-collapse:collapse}td,th{padding:3px}img{max-width:100%;height:auto}</style>"
+        let style = "<style>html{color-scheme:light dark}body{font:14px -apple-system;padding:18px;line-height:1.45;margin:0}table{max-width:100%;border-collapse:collapse}td,th{padding:3px}img{max-width:100%;height:auto}@media(prefers-color-scheme:dark){body,body *{color:#eee!important;background-color:transparent!important;border-color:#666!important}}</style>"
         view.loadHTMLString(policy + style + html, baseURL: nil)
     }
 

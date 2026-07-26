@@ -18,6 +18,7 @@ struct ContentView: View {
                     saveAll: store.saveAll,
                     preview: store.preview,
                     open: store.openAttachment,
+                    itemProvider: store.itemProvider,
                     openEmbedded: store.openEmbedded
                 )
             } else {
@@ -60,7 +61,9 @@ private struct MessageView: View {
     let saveAll: () -> Void
     let preview: (MessageSummary.Attachment) -> Void
     let open: (MessageSummary.Attachment) -> Void
+    let itemProvider: (MessageSummary.Attachment) -> NSItemProvider
     let openEmbedded: (MessageSummary.Attachment) -> Void
+    @State private var selectedAttachmentID: MessageSummary.Attachment.ID?
 
     var body: some View {
         HSplitView {
@@ -114,16 +117,25 @@ private struct MessageView: View {
                 if loaded.summary.attachments.isEmpty {
                     ContentUnavailableView("No Attachments", systemImage: "paperclip")
                 } else {
-                    List(loaded.summary.attachments) { attachment in
+                    List(loaded.summary.attachments, selection: $selectedAttachmentID) { attachment in
                         AttachmentRow(
                             attachment: attachment,
                             save: { save(attachment) },
                             preview: { preview(attachment) },
                             open: { open(attachment) },
+                            itemProvider: { itemProvider(attachment) },
                             openEmbedded: { openEmbedded(attachment) }
                         )
+                        .tag(attachment.id)
                     }
                     .listStyle(.inset)
+                    .onKeyPress(.space) {
+                        guard let id = selectedAttachmentID,
+                              let attachment = loaded.summary.attachments.first(where: { $0.id == id }),
+                              !attachment.isEmbeddedMessage else { return .ignored }
+                        preview(attachment)
+                        return .handled
+                    }
                 }
             }
             .padding(14)
@@ -143,6 +155,7 @@ private struct AttachmentRow: View {
     let save: () -> Void
     let preview: () -> Void
     let open: () -> Void
+    let itemProvider: () -> NSItemProvider
     let openEmbedded: () -> Void
 
     var body: some View {
@@ -177,7 +190,8 @@ private struct AttachmentRow: View {
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
-        .onTapGesture(count: 2, perform: attachment.isEmbeddedMessage ? openEmbedded : preview)
+        .onTapGesture(count: 2, perform: attachment.isEmbeddedMessage ? openEmbedded : open)
+        .onDrag { attachment.isEmbeddedMessage ? NSItemProvider() : itemProvider() }
         .contextMenu {
             if attachment.isEmbeddedMessage {
                 Button("Open Message", action: openEmbedded)

@@ -107,6 +107,15 @@ final class MessageStore: ObservableObject {
         }
     }
 
+    func itemProvider(for attachment: MessageSummary.Attachment) -> NSItemProvider {
+        do {
+            return NSItemProvider(contentsOf: try temporaryFile(for: attachment)) ?? NSItemProvider()
+        } catch {
+            self.error = "Could not export \(attachment.name): \(error.localizedDescription)"
+            return NSItemProvider()
+        }
+    }
+
     func openEmbedded(_ attachment: MessageSummary.Attachment) {
         guard let message else { return }
         do {
