@@ -65,7 +65,7 @@ private struct MessageView: View {
     let open: (MessageSummary.Attachment) -> Void
     let itemProvider: (MessageSummary.Attachment) -> NSItemProvider
     let openEmbedded: (MessageSummary.Attachment) -> Void
-    @FocusState private var attachmentsFocused: Bool
+    @State private var recipientsExpanded = false
 
     var body: some View {
         HSplitView {
@@ -90,11 +90,25 @@ private struct MessageView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    if let to = loaded.summary.to {
-                        Text("To: \(to)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
+                    if loaded.summary.recipientCount > 0 {
+                        DisclosureGroup(isExpanded: $recipientsExpanded) {
+                            ScrollView {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    if let to = loaded.summary.to {
+                                        RecipientLine(label: "To", value: to)
+                                    }
+                                    if let cc = loaded.summary.cc {
+                                        RecipientLine(label: "Cc", value: cc)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .frame(maxHeight: 140)
+                        } label: {
+                            Text("Recipients (\(loaded.summary.recipientCount))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
                 .padding(18)
@@ -129,14 +143,12 @@ private struct MessageView: View {
                             openEmbedded: { openEmbedded(attachment) },
                             select: {
                                 selectedAttachmentID = attachment.id
-                                attachmentsFocused = true
                             }
                         )
                         .tag(attachment.id)
                     }
                     .listStyle(.inset)
-                    .focusable()
-                    .focused($attachmentsFocused)
+                    .focusEffectDisabled()
                 }
             }
             .padding(14)
@@ -148,6 +160,22 @@ private struct MessageView: View {
     private var sender: String {
         let name = loaded.summary.senderName ?? "Unknown Sender"
         return loaded.summary.senderEmail.map { "\(name) <\($0)>" } ?? name
+    }
+}
+
+private struct RecipientLine: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text("\(label):")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.caption)
+                .textSelection(.enabled)
+        }
     }
 }
 
