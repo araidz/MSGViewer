@@ -20,7 +20,7 @@ enum MSGViewerMain {
         application.delegate = delegate
         application.setActivationPolicy(.regular)
         delegate.installMainMenu()
-        application.run()
+        withExtendedLifetime(delegate) { application.run() }
     }
 }
 
@@ -97,7 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldSaveApplicationState(_ sender: NSApplication) -> Bool { false }
     func applicationShouldRestoreApplicationState(_ sender: NSApplication) -> Bool { false }
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func installMainMenu() {
         let main = NSMenu()
@@ -127,6 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let controller = MessageWindowController(url: url)
         controller.didClose = { [weak self] closed in
             self?.windows.removeAll { $0 === closed }
+            if self?.windows.isEmpty == true { NSApp.terminate(nil) }
         }
         if let previous = windows.last?.window {
             controller.window?.setFrameTopLeftPoint(NSPoint(x: previous.frame.minX + 24, y: previous.frame.maxY - 24))

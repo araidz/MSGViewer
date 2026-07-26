@@ -1,13 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#18354a"/>
-      <stop offset="1" stop-color="#0b1824"/>
-    </linearGradient>
-  </defs>
-  <rect x="52" y="52" width="920" height="920" rx="210" fill="url(#bg)"/>
-  <path d="M210 315c0-42 34-76 76-76h452c42 0 76 34 76 76v394c0 42-34 76-76 76H286c-42 0-76-34-76-76V315Z" fill="#f5efe2"/>
-  <path d="m244 302 268 224 268-224" fill="none" stroke="#c65f36" stroke-width="54" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="m240 732 196-180M784 732 588 552" fill="none" stroke="#d8cdb9" stroke-width="38" stroke-linecap="round"/>
-  <path d="M690 442v172c0 84-68 152-152 152s-152-68-152-152V430c0-56 45-101 101-101s101 45 101 101v175c0 29-23 52-52 52s-52-23-52-52V458" fill="none" stroke="#18354a" stroke-width="34" stroke-linecap="round"/>
+  <rect width="1024" height="1024" rx="210" fill="#f5efe2"/>
+  <path d="M92 190 512 530 932 190" fill="none" stroke="#c65f36" stroke-width="62" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M88 844 402 558M936 844 622 558" fill="none" stroke="#d8cdb9" stroke-width="46" stroke-linecap="round"/>
+  <path d="M662 330v270c0 102-67 174-150 174s-150-72-150-174V354c0-76 61-137 137-137s137 61 137 137v238c0 69-56 125-125 125s-125-56-125-125V402" transform="translate(0 16)" fill="none" stroke="#18354a" stroke-width="38" stroke-linecap="round"/>
 </svg>
