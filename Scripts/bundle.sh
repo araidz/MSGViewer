@@ -4,6 +4,7 @@ cd "$(dirname "$0")/.."
 
 version="${1:-0.1.0}"
 app="dist/MSGViewer.app"
+bundle_id="${BUNDLE_ID:-io.github.araidz.msgviewer}"
 
 swift build -c release
 binary="$(swift build -c release --show-bin-path)/MSGViewer"
@@ -20,7 +21,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleDisplayName</key><string>MSG Viewer</string>
   <key>CFBundleExecutable</key><string>MSGViewer</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
-  <key>CFBundleIdentifier</key><string>io.github.araidz.msgviewer</string>
+  <key>CFBundleIdentifier</key><string>${bundle_id}</string>
   <key>CFBundleName</key><string>MSGViewer</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${version}</string>

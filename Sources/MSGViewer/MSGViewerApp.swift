@@ -2,10 +2,8 @@ import AppKit
 import SwiftUI
 
 @main
-struct MSGViewerApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-
-    init() {
+enum MSGViewerMain {
+    static func main() {
         let arguments = CommandLine.arguments
         if arguments.count == 2, arguments[1].lowercased().hasSuffix(".msg") {
             do {
@@ -16,35 +14,130 @@ struct MSGViewerApp: App {
                 exit(1)
             }
         }
+
+        let application = NSApplication.shared
+        let delegate = AppDelegate()
+        application.delegate = delegate
+        application.setActivationPolicy(.regular)
+        delegate.installMainMenu()
+        application.run()
+    }
+}
+
+@MainActor
+final class MessageWindowController: NSWindowController, NSWindowDelegate {
+    let store: MessageStore
+    let sourceURL: URL?
+    var didClose: ((MessageWindowController) -> Void)?
+
+    init(url: URL?) {
+        sourceURL = url?.standardizedFileURL
+        store = MessageStore()
+        let rootView = ContentView(store: store).frame(minWidth: 820, minHeight: 560)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 620),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = NSHostingView(rootView: rootView)
+        window.title = url?.lastPathComponent ?? "MSG Viewer"
+        window.isReleasedWhenClosed = false
+        super.init(window: window)
+        window.delegate = self
+        if let url { store.open(url) }
     }
 
-    var body: some Scene {
-        Window("MSG Viewer", id: "main") {
-            ContentView(store: .shared)
-                .frame(minWidth: 820, minHeight: 560)
-        }
-        .commands {
-            CommandGroup(replacing: .newItem) {
-                Button("Open Message...") { MessageStore.shared.showOpenPanel() }
-                    .keyboardShortcut("o")
-            }
-        }
+    required init?(coder: NSCoder) { nil }
+
+    func windowWillClose(_ notification: Notification) {
+        store.cleanupTemporaryFiles()
+        didClose?(self)
     }
 }
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var windows: [MessageWindowController] = []
+
     func application(_ application: NSApplication, open urls: [URL]) {
-        if let url = urls.first { MessageStore.shared.open(url) }
+        urls.forEach(openWindow)
+    }
+
+    func application(_ sender: NSApplication, openFiles filenames: [String]) {
+        filenames
+            .map { URL(fileURLWithPath: $0) }
+            .filter { $0.pathExtension.lowercased() == "msg" }
+            .forEach(openWindow)
+        sender.reply(toOpenOrPrint: .success)
+    }
+
+    func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool { true }
+
+    func applicationOpenUntitledFile(_ sender: NSApplication) -> Bool {
+        DispatchQueue.main.async { [weak self] in
+            if self?.windows.isEmpty == true { self?.openWindow(nil) }
+        }
+        return true
+    }
+
+    @objc func showOpenPanel() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.init(filenameExtension: "msg")!]
+        panel.allowsMultipleSelection = true
+        if panel.runModal() == .OK {
+            panel.urls.forEach(openWindow)
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        MessageStore.shared.cleanupTemporaryFiles()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MSGViewer", isDirectory: true)
+        try? FileManager.default.removeItem(at: directory)
     }
 
     func applicationShouldSaveApplicationState(_ sender: NSApplication) -> Bool { false }
     func applicationShouldRestoreApplicationState(_ sender: NSApplication) -> Bool { false }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    func installMainMenu() {
+        let main = NSMenu()
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "Quit MSG Viewer", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appItem.submenu = appMenu
+        main.addItem(appItem)
+
+        let fileItem = NSMenuItem()
+        let fileMenu = NSMenu(title: "File")
+        let openItem = fileMenu.addItem(withTitle: "Open Message...", action: #selector(showOpenPanel), keyEquivalent: "o")
+        openItem.target = self
+        fileMenu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        fileItem.submenu = fileMenu
+        main.addItem(fileItem)
+        NSApp.mainMenu = main
+    }
+
+    private func openWindow(_ url: URL?) {
+        if let url = url?.standardizedFileURL,
+           let existing = windows.first(where: { $0.sourceURL == url }) {
+            existing.showWindow(nil)
+            existing.window?.makeKeyAndOrderFront(nil)
+            return
+        }
+        let controller = MessageWindowController(url: url)
+        controller.didClose = { [weak self] closed in
+            self?.windows.removeAll { $0 === closed }
+        }
+        if let previous = windows.last?.window {
+            controller.window?.setFrameTopLeftPoint(NSPoint(x: previous.frame.minX + 24, y: previous.frame.maxY - 24))
+        } else {
+            controller.window?.center()
+        }
+        windows.append(controller)
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
 }
 
 private func inspect(_ path: String) throws {

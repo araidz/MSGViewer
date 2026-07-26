@@ -51,6 +51,17 @@ struct ContentView: View {
         } message: {
             Text(store.error ?? "Unknown error")
         }
+        .background(WindowAccessor { store.attach(to: $0) })
+    }
+}
+
+private struct WindowAccessor: NSViewRepresentable {
+    let update: (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        DispatchQueue.main.async { update(view.window) }
     }
 }
 
