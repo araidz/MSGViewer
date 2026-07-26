@@ -37,6 +37,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func application(_ application: NSApplication, open urls: [URL]) {
         if let url = urls.first { MessageStore.shared.open(url) }
     }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        MessageStore.shared.cleanupTemporaryFiles()
+    }
 }
 
 private func inspect(_ path: String) throws {

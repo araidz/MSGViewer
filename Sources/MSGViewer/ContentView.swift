@@ -10,7 +10,16 @@ struct ContentView: View {
             if store.isLoading {
                 ProgressView("Opening message...")
             } else if let loaded = store.message {
-                MessageView(loaded: loaded, save: store.save)
+                MessageView(
+                    loaded: loaded,
+                    canGoBack: store.canGoBack,
+                    goBack: store.goBack,
+                    save: store.save,
+                    saveAll: store.saveAll,
+                    preview: store.preview,
+                    open: store.openAttachment,
+                    openEmbedded: store.openEmbedded
+                )
             } else {
                 ContentUnavailableView {
                     Label("Open an Outlook Message", systemImage: "envelope.open")
@@ -45,15 +54,28 @@ struct ContentView: View {
 
 private struct MessageView: View {
     let loaded: LoadedMessage
+    let canGoBack: Bool
+    let goBack: () -> Void
     let save: (MessageSummary.Attachment) -> Void
+    let saveAll: () -> Void
+    let preview: (MessageSummary.Attachment) -> Void
+    let open: (MessageSummary.Attachment) -> Void
+    let openEmbedded: (MessageSummary.Attachment) -> Void
 
     var body: some View {
         HSplitView {
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 7) {
-                    Text(loaded.summary.subject ?? "No Subject")
-                        .font(.title2.weight(.semibold))
-                        .textSelection(.enabled)
+                    HStack(alignment: .firstTextBaseline) {
+                        if canGoBack {
+                            Button(action: goBack) { Image(systemName: "chevron.left") }
+                                .buttonStyle(.borderless)
+                                .help("Back to parent message")
+                        }
+                        Text(loaded.summary.subject ?? "No Subject")
+                            .font(.title2.weight(.semibold))
+                            .textSelection(.enabled)
+                    }
                     HStack(alignment: .firstTextBaseline) {
                         Text(sender)
                             .font(.headline)
@@ -84,13 +106,22 @@ private struct MessageView: View {
                     Spacer()
                     Text("\(loaded.summary.attachments.count)")
                         .foregroundStyle(.secondary)
+                    Button("Save All", action: saveAll)
+                        .controlSize(.small)
+                        .disabled(!loaded.summary.attachments.contains { !$0.isEmbeddedMessage })
                 }
 
                 if loaded.summary.attachments.isEmpty {
                     ContentUnavailableView("No Attachments", systemImage: "paperclip")
                 } else {
                     List(loaded.summary.attachments) { attachment in
-                        AttachmentRow(attachment: attachment) { save(attachment) }
+                        AttachmentRow(
+                            attachment: attachment,
+                            save: { save(attachment) },
+                            preview: { preview(attachment) },
+                            open: { open(attachment) },
+                            openEmbedded: { openEmbedded(attachment) }
+                        )
                     }
                     .listStyle(.inset)
                 }
@@ -98,7 +129,7 @@ private struct MessageView: View {
             .padding(14)
             .frame(minWidth: 260, idealWidth: 310, maxWidth: 380)
         }
-        .navigationTitle(loaded.url.lastPathComponent)
+        .navigationTitle(loaded.displayName)
     }
 
     private var sender: String {
@@ -110,6 +141,9 @@ private struct MessageView: View {
 private struct AttachmentRow: View {
     let attachment: MessageSummary.Attachment
     let save: () -> Void
+    let preview: () -> Void
+    let open: () -> Void
+    let openEmbedded: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
@@ -125,13 +159,33 @@ private struct AttachmentRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
-            Button(action: save) {
-                Image(systemName: "square.and.arrow.down")
+            Menu {
+                if attachment.isEmbeddedMessage {
+                    Button("Open Message", action: openEmbedded)
+                } else {
+                    Button("Quick Look", action: preview)
+                    Button("Open", action: open)
+                    Divider()
+                    Button("Save As...", action: save)
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
             }
             .buttonStyle(.borderless)
-            .help("Save attachment")
-            .disabled(attachment.isEmbeddedMessage)
+            .menuIndicator(.hidden)
+            .help("Attachment actions")
         }
         .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2, perform: attachment.isEmbeddedMessage ? openEmbedded : preview)
+        .contextMenu {
+            if attachment.isEmbeddedMessage {
+                Button("Open Message", action: openEmbedded)
+            } else {
+                Button("Quick Look", action: preview)
+                Button("Open", action: open)
+                Button("Save As...", action: save)
+            }
+        }
     }
 }

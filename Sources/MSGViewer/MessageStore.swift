@@ -1,8 +1,10 @@
 import AppKit
 import Foundation
+@preconcurrency import QuickLookUI
 
 struct LoadedMessage: Sendable {
     let url: URL
+    let displayName: String
     let parser: MSGParser
     let summary: MessageSummary
 }
@@ -11,9 +13,18 @@ struct LoadedMessage: Sendable {
 final class MessageStore: ObservableObject {
     static let shared = MessageStore()
 
-    @Published private(set) var message: LoadedMessage?
+    @Published private(set) var messages: [LoadedMessage] = []
     @Published private(set) var isLoading = false
     @Published var error: String?
+    private let temporaryDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("MSGViewer", isDirectory: true)
+    private let preview = AttachmentPreviewController()
+
+    var message: LoadedMessage? { messages.last }
+    var canGoBack: Bool { messages.count > 1 }
+
+    private init() {
+        cleanupTemporaryFiles()
+    }
 
     func showOpenPanel() {
         let panel = NSOpenPanel()
@@ -34,9 +45,9 @@ final class MessageStore: ObservableObject {
                 let loaded = try await Task.detached(priority: .userInitiated) {
                     let data = try Data(contentsOf: url, options: .mappedIfSafe)
                     let parser = try MSGParser(data: data)
-                    return LoadedMessage(url: url, parser: parser, summary: try parser.parse())
+                    return LoadedMessage(url: url, displayName: url.lastPathComponent, parser: parser, summary: try parser.parse())
                 }.value
-                message = loaded
+                messages = [loaded]
                 NSDocumentController.shared.noteNewRecentDocumentURL(url)
             } catch {
                 self.error = error.localizedDescription
@@ -58,9 +69,114 @@ final class MessageStore: ObservableObject {
         }
     }
 
+    func saveAll() {
+        guard let message else { return }
+        let attachments = message.summary.attachments.filter { !$0.isEmbeddedMessage }
+        guard !attachments.isEmpty else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.prompt = "Save All"
+        guard panel.runModal() == .OK, let directory = panel.url else { return }
+
+        do {
+            for attachment in attachments {
+                let destination = uniqueURL(in: directory, filename: safeFilename(attachment.name))
+                try message.parser.data(for: attachment).write(to: destination, options: .atomic)
+            }
+        } catch {
+            self.error = "Could not save all attachments: \(error.localizedDescription)"
+        }
+    }
+
+    func preview(_ attachment: MessageSummary.Attachment) {
+        do {
+            let url = try temporaryFile(for: attachment)
+            preview.show(url)
+        } catch {
+            self.error = "Could not preview \(attachment.name): \(error.localizedDescription)"
+        }
+    }
+
+    func openAttachment(_ attachment: MessageSummary.Attachment) {
+        do {
+            NSWorkspace.shared.open(try temporaryFile(for: attachment))
+        } catch {
+            self.error = "Could not open \(attachment.name): \(error.localizedDescription)"
+        }
+    }
+
+    func openEmbedded(_ attachment: MessageSummary.Attachment) {
+        guard let message else { return }
+        do {
+            let parser = try message.parser.embeddedMessage(for: attachment)
+            messages.append(LoadedMessage(
+                url: message.url,
+                displayName: attachment.name,
+                parser: parser,
+                summary: try parser.parse()
+            ))
+        } catch {
+            self.error = "Could not open attached message: \(error.localizedDescription)"
+        }
+    }
+
+    func goBack() {
+        if canGoBack { messages.removeLast() }
+    }
+
+    func cleanupTemporaryFiles() {
+        try? FileManager.default.removeItem(at: temporaryDirectory)
+    }
+
+    private func temporaryFile(for attachment: MessageSummary.Attachment) throws -> URL {
+        guard let message else { throw ParseError.invalid("no message is open") }
+        let directory = temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent(safeFilename(attachment.name))
+        try message.parser.data(for: attachment).write(to: url, options: .atomic)
+        return url
+    }
+
+    private func uniqueURL(in directory: URL, filename: String) -> URL {
+        let base = (filename as NSString).deletingPathExtension
+        let ext = (filename as NSString).pathExtension
+        var candidate = directory.appendingPathComponent(filename)
+        var number = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            let numbered = ext.isEmpty ? "\(base) \(number)" : "\(base) \(number).\(ext)"
+            candidate = directory.appendingPathComponent(numbered)
+            number += 1
+        }
+        return candidate
+    }
+
     private func safeFilename(_ name: String) -> String {
         let invalid = CharacterSet(charactersIn: "/:").union(.controlCharacters)
         let cleaned = name.components(separatedBy: invalid).joined(separator: "-")
         return cleaned.isEmpty ? "Attachment" : cleaned
+    }
+}
+
+@MainActor
+private final class AttachmentPreviewController: NSObject {
+    private var url: URL?
+
+    func show(_ url: URL) {
+        self.url = url
+        guard let panel = QLPreviewPanel.shared() else { return }
+        panel.dataSource = self
+        panel.reloadData()
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+}
+
+extension AttachmentPreviewController: @MainActor QLPreviewPanelDataSource {
+    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { url == nil ? 0 : 1 }
+
+    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> any QLPreviewItem {
+        url! as NSURL
     }
 }
