@@ -19,7 +19,7 @@ struct MSGViewerApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
+        Window("MSG Viewer", id: "main") {
             ContentView(store: .shared)
                 .frame(minWidth: 820, minHeight: 560)
         }
@@ -44,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldSaveApplicationState(_ sender: NSApplication) -> Bool { false }
     func applicationShouldRestoreApplicationState(_ sender: NSApplication) -> Bool { false }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }
 
 private func inspect(_ path: String) throws {
@@ -62,4 +63,5 @@ private func inspect(_ path: String) throws {
     print("RTF kind: \(message.rtfBody?.contains("\\fromhtml") == true ? "encapsulated HTML" : "native RTF")")
     print("Plain body: \(message.plainBody.map { "yes (\($0.count) characters)" } ?? "no")")
     print("Attachments: \(message.attachments.count) (\(attachmentBytes) bytes, \(message.attachments.filter(\.isEmbeddedMessage).count) embedded messages)")
+    print("Inline images: \(message.htmlBody?.components(separatedBy: "data:image/").count.advanced(by: -1) ?? 0)")
 }

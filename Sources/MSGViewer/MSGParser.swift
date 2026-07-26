@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 
 struct MessageSummary: Sendable {
     struct Attachment: Identifiable, Sendable {
@@ -6,6 +7,9 @@ struct MessageSummary: Sendable {
         let name: String
         let size: UInt64
         let isEmbeddedMessage: Bool
+        let mimeType: String?
+        let contentID: String?
+        let contentLocation: String?
         fileprivate let contentEntryIndex: Int?
         fileprivate let embeddedEntryIndex: Int?
     }
@@ -42,6 +46,7 @@ struct MSGParser: Sendable {
         let recipientFolders = try file.children(of: root).filter { $0.1.name.hasPrefix("__recip_version1.0_#") }
         let attachmentFolders = try file.children(of: root).filter { $0.1.name.hasPrefix("__attach_version1.0_#") }
         let rtfData = try rtfProperty(in: root)
+        let rawHTML = try htmlProperty(in: root) ?? rtfData.flatMap(RTFHTMLExtractor.extract)
 
         let attachments = try attachmentFolders.map { index, _ in
             let embeddedName = "__substg1.0_3701000D"
@@ -56,9 +61,28 @@ struct MSGParser: Sendable {
                 name: name,
                 size: contentEntry?.1.size ?? 0,
                 isEmbeddedMessage: embeddedEntry != nil,
+                mimeType: try stringProperty(id: "370E", in: index),
+                contentID: try stringProperty(id: "3712", in: index),
+                contentLocation: try stringProperty(id: "3713", in: index),
                 contentEntryIndex: contentEntry?.0,
                 embeddedEntryIndex: embeddedEntry?.0
             )
+        }
+
+        let resources = try attachments.compactMap { attachment -> InlineImageResource? in
+            guard let contentIndex = attachment.contentEntryIndex,
+                  file.entries.indices.contains(contentIndex) else { return nil }
+            let mimeType = attachment.mimeType
+                ?? UTType(filenameExtension: (attachment.name as NSString).pathExtension)?.preferredMIMEType
+            guard let mimeType, ["image/png", "image/jpeg", "image/jpg", "image/gif", "image/tiff", "image/bmp", "image/webp"].contains(mimeType.lowercased()) else {
+                return nil
+            }
+            let references = [attachment.contentID?.trimmingCharacters(in: CharacterSet(charactersIn: "<>")), attachment.contentLocation, attachment.name]
+                .compactMap { $0 }
+                .filter { !$0.isEmpty }
+            guard !references.isEmpty,
+                  rawHTML.map({ html in references.contains { html.localizedCaseInsensitiveContains($0) } }) == true else { return nil }
+            return InlineImageResource(references: references, mimeType: mimeType, data: try file.stream(file.entries[contentIndex]))
         }
 
         return MessageSummary(
@@ -70,7 +94,7 @@ struct MSGParser: Sendable {
             cc: try stringProperty(id: "0E03", in: root),
             recipientCount: recipientFolders.count,
             plainBody: try stringProperty(id: "1000", in: root),
-            htmlBody: try htmlProperty(in: root) ?? rtfData.flatMap(RTFHTMLExtractor.extract),
+            htmlBody: rawHTML.map { embeddingInlineImages(in: $0, resources: resources) },
             rtfBody: clean(rtfData.flatMap { String(data: $0, encoding: .windowsCP1252) }),
             attachments: attachments
         )
@@ -146,5 +170,30 @@ struct MSGParser: Sendable {
         guard let value else { return nil }
         let cleaned = value.trimmingCharacters(in: .controlCharacters.union(.whitespacesAndNewlines))
         return cleaned.isEmpty ? nil : cleaned
+    }
+}
+
+struct InlineImageResource: Sendable {
+    let references: [String]
+    let mimeType: String
+    let data: Data
+}
+
+func embeddingInlineImages(in html: String, resources: [InlineImageResource]) -> String {
+    resources.reduce(html) { result, resource in
+        let dataURL = "data:\(resource.mimeType);base64,\(resource.data.base64EncodedString())"
+        return resource.references.reduce(result) { html, reference in
+            var html = html.replacingOccurrences(of: "cid:\(reference)", with: dataURL, options: .caseInsensitive)
+            for quote in ["\"", "'"] {
+                for attribute in ["src", "background"] {
+                    html = html.replacingOccurrences(
+                        of: "\(attribute)=\(quote)\(reference)\(quote)",
+                        with: "\(attribute)=\(quote)\(dataURL)\(quote)",
+                        options: .caseInsensitive
+                    )
+                }
+            }
+            return html
+        }
     }
 }

@@ -27,3 +27,11 @@ import Testing
     let html = RTFHTMLExtractor.extract(Data(rtf.utf8))
     #expect(html?.contains("<body>Hello <b>world</b></body>") == true)
 }
+
+@Test func embedsInlineImagesWithoutTouchingRemoteImages() {
+    let html = #"<img src="cid:logo"><img src="https://example.com/logo.png">"#
+    let resource = InlineImageResource(references: ["logo"], mimeType: "image/png", data: Data([1, 2, 3]))
+    let rendered = embeddingInlineImages(in: html, resources: [resource])
+    #expect(rendered.contains("src=\"data:image/png;base64,AQID\""))
+    #expect(rendered.contains("src=\"https://example.com/logo.png\""))
+}
