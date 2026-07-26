@@ -10,8 +10,12 @@ import Testing
 
 @Test func parsesLocalFixtureWhenProvided() throws {
     guard let path = ProcessInfo.processInfo.environment["MSG_FIXTURE"] else { return }
-    let message = try MSGParser(data: Data(contentsOf: URL(fileURLWithPath: path))).parse()
+    let parser = try MSGParser(data: Data(contentsOf: URL(fileURLWithPath: path)))
+    let message = try parser.parse()
     #expect(message.subject != nil)
     #expect(message.htmlBody != nil || message.rtfBody != nil)
     #expect(!message.attachments.isEmpty)
+    if let attachment = message.attachments.first, !attachment.isEmbeddedMessage {
+        #expect(UInt64(try parser.data(for: attachment).count) == attachment.size)
+    }
 }

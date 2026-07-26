@@ -1,6 +1,6 @@
 import Foundation
 
-enum ParseError: Error, CustomStringConvertible {
+enum ParseError: Error, CustomStringConvertible, Sendable {
     case invalid(String)
     case unsupported(String)
 
@@ -12,7 +12,7 @@ enum ParseError: Error, CustomStringConvertible {
     }
 }
 
-struct DirectoryEntry {
+struct DirectoryEntry: Sendable {
     let name: String
     let type: UInt8
     let leftSibling: UInt32
@@ -22,7 +22,7 @@ struct DirectoryEntry {
     let size: UInt64
 }
 
-struct CompoundFile {
+struct CompoundFile: Sendable {
     private static let signature: [UInt8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]
     private static let endOfChain = UInt32.max - 1
     private static let freeSector = UInt32.max

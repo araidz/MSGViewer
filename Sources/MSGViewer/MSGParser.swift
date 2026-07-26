@@ -1,10 +1,13 @@
 import Foundation
 
-struct MessageSummary {
-    struct Attachment {
+struct MessageSummary: Sendable {
+    struct Attachment: Identifiable, Sendable {
+        let id: Int
         let name: String
         let size: UInt64
         let isEmbeddedMessage: Bool
+        fileprivate let contentEntryIndex: Int?
+        fileprivate let embeddedEntryIndex: Int?
     }
 
     let subject: String?
@@ -20,30 +23,40 @@ struct MessageSummary {
     let attachments: [Attachment]
 }
 
-struct MSGParser {
+struct MSGParser: Sendable {
     private let file: CompoundFile
+    private let rootIndex: Int
 
     init(data: Data) throws {
         file = try CompoundFile(data: data)
+        rootIndex = 0
+    }
+
+    private init(file: CompoundFile, rootIndex: Int) {
+        self.file = file
+        self.rootIndex = rootIndex
     }
 
     func parse() throws -> MessageSummary {
-        let root = 0
+        let root = rootIndex
         let recipientFolders = try file.children(of: root).filter { $0.1.name.hasPrefix("__recip_version1.0_#") }
         let attachmentFolders = try file.children(of: root).filter { $0.1.name.hasPrefix("__attach_version1.0_#") }
 
         let attachments = try attachmentFolders.map { index, _ in
             let embeddedName = "__substg1.0_3701000D"
-            let embedded = try file.child(named: embeddedName, of: index) != nil
-            let contentEntry = try propertyEntry(id: "3701", types: ["0102"], in: index)?.1
+            let embeddedEntry = try file.child(named: embeddedName, of: index)
+            let contentEntry = try propertyEntry(id: "3701", types: ["0102"], in: index)
             let name = try stringProperty(id: "3707", in: index)
                 ?? stringProperty(id: "3704", in: index)
                 ?? stringProperty(id: "3001", in: index)
-                ?? (embedded ? "Attached message.msg" : "Attachment")
+                ?? (embeddedEntry == nil ? "Attachment" : "Attached message.msg")
             return MessageSummary.Attachment(
+                id: index,
                 name: name,
-                size: contentEntry?.size ?? 0,
-                isEmbeddedMessage: embedded
+                size: contentEntry?.1.size ?? 0,
+                isEmbeddedMessage: embeddedEntry != nil,
+                contentEntryIndex: contentEntry?.0,
+                embeddedEntryIndex: embeddedEntry?.0
             )
         }
 
@@ -60,6 +73,20 @@ struct MSGParser {
             rtfBody: try rtfProperty(in: root),
             attachments: attachments
         )
+    }
+
+    func data(for attachment: MessageSummary.Attachment) throws -> Data {
+        guard let index = attachment.contentEntryIndex, file.entries.indices.contains(index) else {
+            throw ParseError.unsupported("attachment has no binary content")
+        }
+        return try file.stream(file.entries[index])
+    }
+
+    func embeddedMessage(for attachment: MessageSummary.Attachment) throws -> MSGParser {
+        guard let index = attachment.embeddedEntryIndex else {
+            throw ParseError.unsupported("attachment is not an embedded message")
+        }
+        return MSGParser(file: file, rootIndex: index)
     }
 
     private func propertyEntry(id: String, types: [String], in parent: Int) throws -> (Int, DirectoryEntry)? {
@@ -98,7 +125,10 @@ struct MSGParser {
     private func messageDate(in parent: Int) throws -> Date? {
         guard let (_, entry) = try file.child(named: "__properties_version1.0", of: parent) else { return nil }
         let data = try file.stream(entry)
-        let headerSize = parent == 0 ? 32 : 8
+        let folderName = file.entries[parent].name
+        let headerSize = folderName.hasPrefix("__attach") || folderName.hasPrefix("__recip")
+            ? 8
+            : folderName == "Root Entry" ? 32 : 24
         guard data.count >= headerSize else { throw ParseError.invalid("property stream header is truncated") }
 
         for offset in stride(from: headerSize, through: data.count - 16, by: 16) {
