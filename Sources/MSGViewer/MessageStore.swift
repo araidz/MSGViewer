@@ -202,24 +202,25 @@ final class MessageStore: ObservableObject {
         return url
     }
 
-    private func uniqueURL(in directory: URL, filename: String) -> URL {
-        let base = (filename as NSString).deletingPathExtension
-        let ext = (filename as NSString).pathExtension
-        var candidate = directory.appendingPathComponent(filename)
-        var number = 2
-        while FileManager.default.fileExists(atPath: candidate.path) {
-            let numbered = ext.isEmpty ? "\(base) \(number)" : "\(base) \(number).\(ext)"
-            candidate = directory.appendingPathComponent(numbered)
-            number += 1
-        }
-        return candidate
-    }
+}
 
-    private func safeFilename(_ name: String) -> String {
-        let invalid = CharacterSet(charactersIn: "/:").union(.controlCharacters)
-        let cleaned = name.components(separatedBy: invalid).joined(separator: "-")
-        return cleaned.isEmpty ? "Attachment" : cleaned
+func uniqueURL(in directory: URL, filename: String) -> URL {
+    let base = (filename as NSString).deletingPathExtension
+    let ext = (filename as NSString).pathExtension
+    var candidate = directory.appendingPathComponent(filename)
+    var number = 2
+    while FileManager.default.fileExists(atPath: candidate.path) {
+        let numbered = ext.isEmpty ? "\(base) \(number)" : "\(base) \(number).\(ext)"
+        candidate = directory.appendingPathComponent(numbered)
+        number += 1
     }
+    return candidate
+}
+
+func safeFilename(_ name: String) -> String {
+    let invalid = CharacterSet(charactersIn: "/:").union(.controlCharacters)
+    let cleaned = name.components(separatedBy: invalid).joined(separator: "-")
+    return cleaned.isEmpty ? "Attachment" : cleaned
 }
 
 @MainActor

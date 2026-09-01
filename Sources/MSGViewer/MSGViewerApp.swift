@@ -5,6 +5,19 @@ import SwiftUI
 enum MSGViewerMain {
     static func main() {
         let arguments = CommandLine.arguments
+        if arguments.dropFirst().first == "dump" {
+            do {
+                guard arguments.count == 3 || (arguments.count == 5 && arguments[3] == "--output"),
+                      arguments[2].lowercased().hasSuffix(".msg") else {
+                    throw ParseError.invalid("usage: MSGViewer dump <file.msg> [--output <directory>]")
+                }
+                try dump(arguments[2], outputPath: arguments.count == 5 ? arguments[4] : nil)
+                exit(0)
+            } catch {
+                FileHandle.standardError.write(Data("\(error)\n".utf8))
+                exit(1)
+            }
+        }
         if arguments.count == 2, arguments[1].lowercased().hasSuffix(".msg") {
             do {
                 try inspect(arguments[1])
@@ -158,4 +171,54 @@ private func inspect(_ path: String) throws {
     print("Plain body: \(message.plainBody.map { "yes (\($0.count) characters)" } ?? "no")")
     print("Attachments: \(message.attachments.count) (\(attachmentBytes) bytes, \(message.attachments.filter(\.isEmbeddedMessage).count) embedded messages)")
     print("Inline images: \(message.htmlBody?.components(separatedBy: "data:image/").count.advanced(by: -1) ?? 0)")
+}
+
+private func dump(_ path: String, outputPath: String?) throws {
+    let source = URL(fileURLWithPath: path).standardizedFileURL
+    let data = try Data(contentsOf: source, options: .mappedIfSafe)
+    let parser = try MSGParser(data: data)
+    let message = try parser.parse()
+    let output = outputPath.map { URL(fileURLWithPath: $0).standardizedFileURL }
+        ?? FileManager.default.temporaryDirectory
+            .appendingPathComponent("MSGViewer", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+
+    print("File: \(source.path)")
+    print("Subject: \(message.subject ?? "")")
+    print("Sender: \(message.senderName ?? "")")
+    print("Sender email: \(message.senderEmail ?? "")")
+    print("Date: \(message.date?.description ?? "")")
+    print("To: \(message.to ?? "")")
+    print("Cc: \(message.cc ?? "")")
+    print("Recipients: \(message.recipientCount)")
+    let body = message.plainBody ?? message.htmlBody ?? message.rtfBody ?? ""
+    print("\n--- BODY ---")
+    print(body)
+    print("--- END BODY ---\n")
+
+    let bodyURL = uniqueURL(in: output, filename: "body.txt")
+    try Data(body.utf8).write(to: bodyURL, options: .atomic)
+    print("Body file: \(bodyURL.path)")
+
+    if let html = message.htmlBody {
+        let destination = uniqueURL(in: output, filename: "body.html")
+        try Data(html.utf8).write(to: destination, options: .atomic)
+        print("HTML body: \(destination.path)")
+    }
+
+    let attachments = message.attachments.filter { !$0.isEmbeddedMessage }
+    if !attachments.isEmpty {
+        let directory = output.appendingPathComponent("attachments", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for attachment in attachments {
+            let destination = uniqueURL(in: directory, filename: safeFilename(attachment.name))
+            try parser.data(for: attachment).write(to: destination, options: .atomic)
+            print("Attachment: \(destination.path)")
+        }
+    }
+    for attachment in message.attachments where attachment.isEmbeddedMessage {
+        print("Embedded message (not extracted): \(attachment.name)")
+    }
+    print("Output directory: \(output.path)")
 }
