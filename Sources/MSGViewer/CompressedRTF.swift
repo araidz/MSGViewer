@@ -27,7 +27,7 @@ enum CompressedRTF {
         dictionary.replaceSubrange(0..<initialDictionary.count, with: initialDictionary)
         var writeOffset = initialDictionary.count
         var cursor = 16
-        var output = Data()
+        var output: [UInt8] = []
         output.reserveCapacity(rawSize)
 
         while cursor < end, output.count < rawSize {
@@ -49,7 +49,7 @@ enum CompressedRTF {
                     var readOffset = Int(reference >> 4)
                     if readOffset == writeOffset {
                         guard output.count == rawSize else { throw ParseError.invalid("compressed RTF ended early") }
-                        return output
+                        return Data(output)
                     }
                     let length = Int(reference & 0xF) + 2
                     for _ in 0..<length where output.count < rawSize {
@@ -63,7 +63,7 @@ enum CompressedRTF {
             }
         }
         guard output.count == rawSize else { throw ParseError.invalid("compressed RTF output is truncated") }
-        return output
+        return Data(output)
     }
 
     private static func crc(_ bytes: Data.SubSequence) -> UInt32 {

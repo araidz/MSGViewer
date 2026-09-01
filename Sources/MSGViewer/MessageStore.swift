@@ -20,39 +20,12 @@ final class MessageStore: ObservableObject {
         .appendingPathComponent("MSGViewer", isDirectory: true)
         .appendingPathComponent(UUID().uuidString, isDirectory: true)
     private let preview = AttachmentPreviewController()
-    private var keyMonitor: Any?
-    private weak var window: NSWindow?
 
     var message: LoadedMessage? { messages.last }
     var canGoBack: Bool { messages.count > 1 }
 
-    init(message: LoadedMessage? = nil) {
-        if let message {
-            messages = [message]
-            selectedAttachmentID = message.summary.attachments.first?.id
-        }
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.keyCode == 49,
-                  event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty else { return event }
-            let handled = MainActor.assumeIsolated { self?.previewSelectedAttachment() == true }
-            return handled ? nil : event
-        }
-    }
-
     isolated deinit {
-        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         try? FileManager.default.removeItem(at: temporaryDirectory)
-    }
-
-    func attach(to window: NSWindow?) {
-        self.window = window
-    }
-
-    func showOpenPanel() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.init(filenameExtension: "msg")!]
-        panel.allowsMultipleSelection = false
-        if panel.runModal() == .OK, let url = panel.url { open(url) }
     }
 
     func open(_ url: URL) {
@@ -122,9 +95,8 @@ final class MessageStore: ObservableObject {
         }
     }
 
-    private func previewSelectedAttachment() -> Bool {
-        guard window?.isKeyWindow == true,
-              let message,
+    func previewSelected() -> Bool {
+        guard let message,
               let selectedAttachmentID,
               let attachment = message.summary.attachments.first(where: { $0.id == selectedAttachmentID }),
               !attachment.isEmbeddedMessage else { return false }
@@ -187,10 +159,6 @@ final class MessageStore: ObservableObject {
             messages.removeLast()
             selectedAttachmentID = messages.last?.summary.attachments.first?.id
         }
-    }
-
-    func cleanupTemporaryFiles() {
-        try? FileManager.default.removeItem(at: temporaryDirectory)
     }
 
     private func temporaryFile(for attachment: MessageSummary.Attachment) throws -> URL {

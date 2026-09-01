@@ -10,18 +10,7 @@ struct ContentView: View {
             if store.isLoading {
                 ProgressView("Opening message...")
             } else if let loaded = store.message {
-                MessageView(
-                    loaded: loaded,
-                    selectedAttachmentID: $store.selectedAttachmentID,
-                    canGoBack: store.canGoBack,
-                    goBack: store.goBack,
-                    save: store.save,
-                    saveAll: store.saveAll,
-                    preview: store.preview,
-                    open: store.openAttachment,
-                    itemProvider: store.itemProvider,
-                    openEmbedded: store.openEmbedded
-                )
+                MessageView(store: store, loaded: loaded)
             } else {
                 ContentUnavailableView {
                     Label("Open an Outlook Message", systemImage: "envelope.open")
@@ -51,31 +40,12 @@ struct ContentView: View {
         } message: {
             Text(store.error ?? "Unknown error")
         }
-        .background(WindowAccessor { store.attach(to: $0) })
-    }
-}
-
-private struct WindowAccessor: NSViewRepresentable {
-    let update: (NSWindow?) -> Void
-
-    func makeNSView(context: Context) -> NSView { NSView() }
-
-    func updateNSView(_ view: NSView, context: Context) {
-        DispatchQueue.main.async { update(view.window) }
     }
 }
 
 private struct MessageView: View {
+    @ObservedObject var store: MessageStore
     let loaded: LoadedMessage
-    @Binding var selectedAttachmentID: MessageSummary.Attachment.ID?
-    let canGoBack: Bool
-    let goBack: () -> Void
-    let save: (MessageSummary.Attachment) -> Void
-    let saveAll: () -> Void
-    let preview: (MessageSummary.Attachment) -> Void
-    let open: (MessageSummary.Attachment) -> Void
-    let itemProvider: (MessageSummary.Attachment) -> NSItemProvider
-    let openEmbedded: (MessageSummary.Attachment) -> Void
     @State private var recipientsExpanded = false
 
     var body: some View {
@@ -83,8 +53,8 @@ private struct MessageView: View {
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 7) {
                     HStack(alignment: .firstTextBaseline) {
-                        if canGoBack {
-                            Button(action: goBack) { Image(systemName: "chevron.left") }
+                        if store.canGoBack {
+                            Button(action: store.goBack) { Image(systemName: "chevron.left") }
                                 .buttonStyle(.borderless)
                                 .help("Back to parent message")
                         }
@@ -136,7 +106,7 @@ private struct MessageView: View {
                     Spacer()
                     Text("\(loaded.summary.attachments.count)")
                         .foregroundStyle(.secondary)
-                    Button("Save All", action: saveAll)
+                    Button("Save All", action: store.saveAll)
                         .controlSize(.small)
                         .disabled(!loaded.summary.attachments.contains { !$0.isEmbeddedMessage })
                 }
@@ -144,22 +114,13 @@ private struct MessageView: View {
                 if loaded.summary.attachments.isEmpty {
                     ContentUnavailableView("No Attachments", systemImage: "paperclip")
                 } else {
-                    List(loaded.summary.attachments, selection: $selectedAttachmentID) { attachment in
-                        AttachmentRow(
-                            attachment: attachment,
-                            save: { save(attachment) },
-                            preview: { preview(attachment) },
-                            open: { open(attachment) },
-                            itemProvider: { itemProvider(attachment) },
-                            openEmbedded: { openEmbedded(attachment) },
-                            select: {
-                                selectedAttachmentID = attachment.id
-                            }
-                        )
-                        .tag(attachment.id)
+                    List(loaded.summary.attachments, selection: $store.selectedAttachmentID) { attachment in
+                        AttachmentRow(store: store, attachment: attachment)
+                            .tag(attachment.id)
                     }
                     .listStyle(.inset)
                     .focusEffectDisabled()
+                    .onKeyPress(.space) { store.previewSelected() ? .handled : .ignored }
                 }
             }
             .padding(14)
@@ -191,13 +152,8 @@ private struct RecipientLine: View {
 }
 
 private struct AttachmentRow: View {
+    let store: MessageStore
     let attachment: MessageSummary.Attachment
-    let save: () -> Void
-    let preview: () -> Void
-    let open: () -> Void
-    let itemProvider: () -> NSItemProvider
-    let openEmbedded: () -> Void
-    let select: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
@@ -214,14 +170,7 @@ private struct AttachmentRow: View {
             }
             Spacer(minLength: 4)
             Menu {
-                if attachment.isEmbeddedMessage {
-                    Button("Open Message", action: openEmbedded)
-                } else {
-                    Button("Quick Look", action: preview)
-                    Button("Open", action: open)
-                    Divider()
-                    Button("Save As...", action: save)
-                }
+                actions
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
@@ -231,17 +180,22 @@ private struct AttachmentRow: View {
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
-        .onTapGesture(count: 2, perform: attachment.isEmbeddedMessage ? openEmbedded : open)
-        .simultaneousGesture(TapGesture().onEnded(select))
-        .onDrag { attachment.isEmbeddedMessage ? NSItemProvider() : itemProvider() }
-        .contextMenu {
-            if attachment.isEmbeddedMessage {
-                Button("Open Message", action: openEmbedded)
-            } else {
-                Button("Quick Look", action: preview)
-                Button("Open", action: open)
-                Button("Save As...", action: save)
-            }
+        .onTapGesture(count: 2) {
+            attachment.isEmbeddedMessage ? store.openEmbedded(attachment) : store.openAttachment(attachment)
+        }
+        .simultaneousGesture(TapGesture().onEnded { store.selectedAttachmentID = attachment.id })
+        .onDrag { attachment.isEmbeddedMessage ? NSItemProvider() : store.itemProvider(for: attachment) }
+        .contextMenu { actions }
+    }
+
+    @ViewBuilder private var actions: some View {
+        if attachment.isEmbeddedMessage {
+            Button("Open Message") { store.openEmbedded(attachment) }
+        } else {
+            Button("Quick Look") { store.preview(attachment) }
+            Button("Open") { store.openAttachment(attachment) }
+            Divider()
+            Button("Save As...") { store.save(attachment) }
         }
     }
 }

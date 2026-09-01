@@ -64,7 +64,6 @@ final class MessageWindowController: NSWindowController, NSWindowDelegate {
     required init?(coder: NSCoder) { nil }
 
     func windowWillClose(_ notification: Notification) {
-        store.cleanupTemporaryFiles()
         didClose?(self)
     }
 }
@@ -75,14 +74,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         urls.forEach(openWindow)
-    }
-
-    func application(_ sender: NSApplication, openFiles filenames: [String]) {
-        filenames
-            .map { URL(fileURLWithPath: $0) }
-            .filter { $0.pathExtension.lowercased() == "msg" }
-            .forEach(openWindow)
-        sender.reply(toOpenOrPrint: .success)
     }
 
     func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool { true }

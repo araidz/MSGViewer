@@ -164,25 +164,26 @@ struct CompoundFile: Sendable {
         guard entries.indices.contains(parentIndex) else { throw ParseError.invalid("directory index is out of range") }
         var result: [(Int, DirectoryEntry)] = []
         var visited = Set<UInt32>()
+        var stack: [Int] = []
+        var current = entries[parentIndex].child
 
-        func walk(_ id: UInt32) throws {
-            guard id != UInt32.max else { return }
-            guard let index = Int(exactly: id), entries.indices.contains(index) else {
-                throw ParseError.invalid("directory tree points outside the directory")
+        // Iterative in-order traversal: keeps name order without recursion that
+        // a crafted sibling chain could use to overflow the stack.
+        while current != UInt32.max || !stack.isEmpty {
+            while current != UInt32.max {
+                guard let index = Int(exactly: current), entries.indices.contains(index) else {
+                    throw ParseError.invalid("directory tree points outside the directory")
+                }
+                guard visited.insert(current).inserted else { throw ParseError.invalid("cyclic directory tree") }
+                stack.append(index)
+                current = entries[index].leftSibling
             }
-            guard visited.insert(id).inserted else { throw ParseError.invalid("cyclic directory tree") }
+            let index = stack.removeLast()
             let entry = entries[index]
-            try walk(entry.leftSibling)
             result.append((index, entry))
-            try walk(entry.rightSibling)
+            current = entry.rightSibling
         }
-
-        try walk(entries[parentIndex].child)
         return result
-    }
-
-    func child(named name: String, of parentIndex: Int) throws -> (Int, DirectoryEntry)? {
-        try children(of: parentIndex).first { $0.1.name.caseInsensitiveCompare(name) == .orderedSame }
     }
 
     func stream(_ entry: DirectoryEntry) throws -> Data {
@@ -218,6 +219,7 @@ struct CompoundFile: Sendable {
     ) throws -> Data {
         if firstSector >= endOfChain { return Data() }
         var output = Data()
+        if let byteLimit { output.reserveCapacity(byteLimit) }
         var sector = firstSector
         var visited = Set<UInt32>()
 
@@ -226,9 +228,9 @@ struct CompoundFile: Sendable {
             guard let index = Int(exactly: sector), fat.indices.contains(index) else {
                 throw ParseError.invalid("FAT chain points outside the FAT")
             }
-            let offset = try sectorOffset(sector, sectorSize: sectorSize, dataCount: data.count)
+            let offset = data.startIndex + (try sectorOffset(sector, sectorSize: sectorSize, dataCount: data.count))
             let remaining = byteLimit.map { $0 - output.count } ?? sectorSize
-            output.append(data.subdata(in: offset..<(offset + min(sectorSize, remaining))))
+            output.append(data[offset..<(offset + min(sectorSize, remaining))])
             sector = fat[index]
         }
         if let byteLimit, output.count != byteLimit { throw ParseError.invalid("stream chain is truncated") }
@@ -243,6 +245,7 @@ struct CompoundFile: Sendable {
         byteLimit: Int
     ) throws -> Data {
         var output = Data()
+        output.reserveCapacity(byteLimit)
         var sector = firstSector
         var visited = Set<UInt32>()
 
@@ -258,7 +261,8 @@ struct CompoundFile: Sendable {
                 throw ParseError.invalid("mini stream points outside its container")
             }
             let count = min(miniSectorSize, byteLimit - output.count)
-            output.append(miniStream.subdata(in: offset..<(offset + count)))
+            let start = miniStream.startIndex + offset
+            output.append(miniStream[start..<(start + count)])
             sector = miniFat[index]
         }
         return output

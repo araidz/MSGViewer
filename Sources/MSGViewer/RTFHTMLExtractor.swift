@@ -73,17 +73,7 @@ enum RTFHTMLExtractor {
                     output.append(Character(UnicodeScalar(byte)))
                 case .word(let word, let value):
                     flush()
-                    switch word {
-                    case "par", "pard": output.append("\n")
-                    case "tab": output.append("\t")
-                    case "line": output += "<br>"
-                    case "u":
-                        if let value {
-                            let scalar = UInt16(bitPattern: Int16(truncatingIfNeeded: value))
-                            if let unicode = UnicodeScalar(scalar) { output.append(Character(unicode)) }
-                        }
-                    default: break
-                    }
+                    append(word: word, value: value, to: &output)
                 case .none: break
                 }
                 index = control.next
@@ -138,17 +128,7 @@ enum RTFHTMLExtractor {
                     output.append(Character(UnicodeScalar(byte)))
                 case .word(let word, let value):
                     flush()
-                    switch word {
-                    case "par", "pard": output.append("\n")
-                    case "tab": output.append("\t")
-                    case "line": output += "<br>"
-                    case "u":
-                        if let value {
-                            let scalar = UInt16(bitPattern: Int16(truncatingIfNeeded: value))
-                            if let unicode = UnicodeScalar(scalar) { output.append(Character(unicode)) }
-                        }
-                    default: break
-                    }
+                    append(word: word, value: value, to: &output)
                 case .none: break
                 }
                 index = min(control.next, range.upperBound)
@@ -166,6 +146,20 @@ enum RTFHTMLExtractor {
             }
         }
         flush()
+    }
+
+    private static func append(word: String, value: Int?, to output: inout String) {
+        switch word {
+        case "par", "pard": output.append("\n")
+        case "tab": output.append("\t")
+        case "line": output += "<br>"
+        case "u":
+            if let value {
+                let scalar = UInt16(bitPattern: Int16(truncatingIfNeeded: value))
+                if let unicode = UnicodeScalar(scalar) { output.append(Character(unicode)) }
+            }
+        default: break
+        }
     }
 
     private enum ControlKind {
