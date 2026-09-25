@@ -131,7 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 private let usage = """
 usage: MSGViewer dump <file.msg> [--output <directory>]
        MSGViewer <file.msg>
-exit codes: 0 ok, 1 parse/IO error, 2 bad arguments, 3 timed out
+exit codes: 0 ok, 1 parse/IO error, 2 bad arguments, 3 timed out (default 60 s, MSGVIEWER_TIMEOUT overrides)
 
 """
 
@@ -156,9 +156,10 @@ private func runCommandLine(_ arguments: [String]) -> Int32 {
     }
 
     // Backstop so a shell caller never waits forever (e.g. an iCloud file that will not download).
-    // Real messages parse in well under a second.
-    DispatchQueue.global().asyncAfter(deadline: .now() + 60) {
-        FileHandle.standardError.write(Data("MSGViewer: timed out after 60 seconds\n".utf8))
+    // Real messages parse in well under a second. MSGVIEWER_TIMEOUT (seconds) overrides the default.
+    let timeout = ProcessInfo.processInfo.environment["MSGVIEWER_TIMEOUT"].flatMap(Double.init) ?? 60
+    DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+        FileHandle.standardError.write(Data("MSGViewer: timed out after \(timeout) seconds\n".utf8))
         exit(3)
     }
     do {

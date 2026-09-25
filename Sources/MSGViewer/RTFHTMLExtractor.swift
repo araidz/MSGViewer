@@ -197,6 +197,9 @@ enum RTFHTMLExtractor {
         return (.word(word, number), index)
     }
 
+    // ponytail: O(n) per unmatched "{", so thousands of unmatched braces go quadratic. Outlook's LZFu
+    // bodies are CRC-checked so truncation cannot produce that; only a crafted MELA body can, and the
+    // CLI watchdog bounds it. Upgrade to a one-pass brace-match table if a real file ever trips it.
     private static func matchingBrace(in bytes: [UInt8], at start: Int) -> Int? {
         var depth = 0
         var index = start

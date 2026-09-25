@@ -54,23 +54,75 @@ import Testing
     #expect(long.hasSuffix(".pdf"))
 }
 
-@Test func commandLineNeverBlocksOnBadArguments() throws {
+/// Runs the built CLI with a hard 5-second cap; a hang shows up as status -1.
+private func runCLI(_ arguments: [String], environment: [String: String] = [:]) throws -> (status: Int32, stdout: String) {
     let binary = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         .appendingPathComponent(".build/debug/MSGViewer")
     try #require(FileManager.default.isExecutableFile(atPath: binary.path))
+    let process = Process()
+    process.executableURL = binary
+    process.arguments = arguments
+    process.environment = ProcessInfo.processInfo.environment.merging(environment) { $1 }
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = FileHandle.nullDevice
+    try process.run()
+    let output = pipe.fileHandleForReading.readDataToEndOfFile()
+    let deadline = Date().addingTimeInterval(5)
+    while process.isRunning && Date() < deadline { usleep(20_000) }
+    if process.isRunning { process.terminate(); return (-1, "") }
+    return (process.terminationStatus, String(decoding: output, as: UTF8.self))
+}
+
+private func fixture(_ nodes: [CFBNode], mutate: (inout [CFBEntry]) -> Void = { _ in }) throws -> URL {
+    var entries = cfbEntries(root: nodes)
+    mutate(&entries)
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("msgviewer-fixture-\(UUID().uuidString).msg")
+    try buildCFB(entries).write(to: url)
+    return url
+}
+
+@Test func commandLineNeverBlocksOnBadArguments() throws {
     for (arguments, expected) in [(["--help"], Int32(0)), (["x.msg", "--json"], 2), (["dump"], 2), (["dump", "/nonexistent.msg"], 1)] {
-        let process = Process()
-        process.executableURL = binary
-        process.arguments = arguments
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        let deadline = Date().addingTimeInterval(5)
-        while process.isRunning && Date() < deadline { usleep(20_000) }
-        if process.isRunning { process.terminate() }
-        #expect(!process.isRunning && process.terminationStatus == expected, "\(arguments)")
+        #expect(try runCLI(arguments).status == expected, "\(arguments)")
     }
+}
+
+@Test func dumpExtractsNestedEmbeddedMessages() throws {
+    let inner = CFBNode.message(subject: "Inner", body: "innermost body")
+    let middle = CFBNode.message(subject: "Middle", body: "middle body", extra: [.attachedMessage(index: 0, inner)])
+    let url = try fixture(CFBNode.message(subject: "Outer", body: "outer body", extra: [.attachedMessage(index: 0, middle)]))
+    let output = url.deletingPathExtension()
+    let result = try runCLI(["dump", url.path, "--output", output.path])
+    #expect(result.status == 0)
+    #expect(result.stdout.components(separatedBy: "=== EMBEDDED MESSAGE:").count == 3)
+    #expect(result.stdout.contains("Subject: Inner"))
+    let nested = output.appendingPathComponent("embedded/Attached message/embedded/Attached message/body.txt")
+    #expect(try String(contentsOf: nested, encoding: .utf8).hasPrefix("innermost body"))
+}
+
+@Test func dumpSurvivesCyclicEmbeddedMessage() throws {
+    // The embedded storage's child list points back at its own attachment folder.
+    let url = try fixture(CFBNode.message(subject: "Loop", body: "loop body", extra: [.attachedMessage(index: 0, [])])) { entries in
+        let attach = entries.firstIndex { $0.name.hasPrefix("__attach") }!
+        let embedded = entries.firstIndex { $0.name == "__substg1.0_3701000D" }!
+        entries[embedded].child = UInt32(attach)
+    }
+    let result = try runCLI(["dump", url.path, "--output", url.deletingPathExtension().path])
+    #expect(result.status == 0)
+    #expect(result.stdout.contains("Warning: embedded message not extracted"))
+    #expect(result.stdout.contains("nested too deeply"))
+}
+
+@Test func watchdogExitsWithCodeThree() throws {
+    // Crafted RTF with 300k unmatched braces makes extraction quadratic (minutes).
+    let rtf = #"{\rtf1\ansi\fromhtml1 {\*\htmltag <html>}"# + String(repeating: "{", count: 300_000)
+    let url = try fixture([.stream("__substg1.0_10090102", melaRTF(rtf))])
+    let start = Date()
+    let result = try runCLI(["dump", url.path, "--output", url.deletingPathExtension().path], environment: ["MSGVIEWER_TIMEOUT": "1"])
+    #expect(result.status == 3)
+    #expect(Date().timeIntervalSince(start) < 4)
 }
 
 @Test func embedsInlineImagesWithoutTouchingRemoteImages() {
