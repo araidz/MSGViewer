@@ -187,7 +187,17 @@ func uniqueURL(in directory: URL, filename: String) -> URL {
 
 func safeFilename(_ name: String) -> String {
     let invalid = CharacterSet(charactersIn: "/:").union(.controlCharacters)
-    let cleaned = name.components(separatedBy: invalid).joined(separator: "-")
+    var cleaned = name.components(separatedBy: invalid).joined(separator: "-").trimmingCharacters(in: .whitespaces)
+    if cleaned.allSatisfy({ $0 == "." }) { cleaned = "" }
+    // NAME_MAX is 255 bytes; stay below it so uniqueURL can still append " 2".
+    let limit = 240
+    if cleaned.utf8.count > limit {
+        let ext = (cleaned as NSString).pathExtension
+        let suffix = ext.isEmpty || ext.utf8.count > 16 ? "" : "." + ext
+        var base = String(cleaned.dropLast(suffix.count))
+        while base.utf8.count + suffix.utf8.count > limit { base.removeLast() }
+        cleaned = base + suffix
+    }
     return cleaned.isEmpty ? "Attachment" : cleaned
 }
 

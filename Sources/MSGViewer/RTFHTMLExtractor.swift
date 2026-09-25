@@ -192,9 +192,7 @@ enum RTFHTMLExtractor {
         }
         let numberStart = index
         while index < bytes.count, isDigit(bytes[index]) { index += 1 }
-        let number = index > numberStart
-            ? sign * Int(String(decoding: bytes[numberStart..<index], as: UTF8.self))!
-            : nil
+        let number = Int(String(decoding: bytes[numberStart..<index], as: UTF8.self)).map { sign * $0 }
         if index < bytes.count, bytes[index] == 0x20 { index += 1 }
         return (.word(word, number), index)
     }

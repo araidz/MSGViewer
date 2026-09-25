@@ -48,7 +48,8 @@ struct MSGParser: Sendable {
         let attachmentFolders = rootChildren.values
             .filter { $0.1.name.hasPrefix("__attach_version1.0_#") }
             .sorted { $0.1.name < $1.1.name }
-        let rtfData = try rtfProperty(in: rootChildren)
+        // The RTF body is a fallback; a corrupt one must not lose the plain/HTML body and attachments.
+        let rtfData = try? rtfProperty(in: rootChildren)
         let rawHTML = try htmlProperty(in: rootChildren) ?? rtfData.flatMap(RTFHTMLExtractor.extract)
 
         let attachments = try attachmentFolders.map { index, _ in
@@ -72,7 +73,7 @@ struct MSGParser: Sendable {
             )
         }
 
-        let resources = try attachments.compactMap { attachment -> InlineImageResource? in
+        let resources = attachments.compactMap { attachment -> InlineImageResource? in
             guard let contentIndex = attachment.contentEntryIndex,
                   file.entries.indices.contains(contentIndex) else { return nil }
             let mimeType = attachment.mimeType
@@ -85,7 +86,8 @@ struct MSGParser: Sendable {
                 .filter { !$0.isEmpty }
             guard !references.isEmpty,
                   rawHTML.map({ html in references.contains { html.range(of: $0, options: .caseInsensitive) != nil } }) == true else { return nil }
-            return InlineImageResource(references: references, mimeType: mimeType, data: try file.stream(file.entries[contentIndex]))
+            guard let data = try? file.stream(file.entries[contentIndex]) else { return nil }
+            return InlineImageResource(references: references, mimeType: mimeType, data: data)
         }
 
         return MessageSummary(
@@ -162,14 +164,17 @@ struct MSGParser: Sendable {
             : folderName == "Root Entry" ? 32 : 24
         guard data.count >= headerSize else { throw ParseError.invalid("property stream header is truncated") }
 
+        // Delivery time, falling back to submit time (embedded/forwarded messages often lack delivery time).
+        var submitTime: Date?
         for offset in stride(from: headerSize, through: data.count - 16, by: 16) {
             let tag = try data.u32(at: offset)
-            guard tag >> 16 == 0x0E06, tag & 0xFFFF == 0x0040 else { continue }
+            guard tag >> 16 == 0x0E06 || tag >> 16 == 0x0039, tag & 0xFFFF == 0x0040 else { continue }
             let fileTime = try data.u64(at: offset + 8)
-            let seconds = Double(fileTime) / 10_000_000 - 11_644_473_600
-            return Date(timeIntervalSince1970: seconds)
+            let date = Date(timeIntervalSince1970: Double(fileTime) / 10_000_000 - 11_644_473_600)
+            if tag >> 16 == 0x0E06 { return date }
+            submitTime = submitTime ?? date
         }
-        return nil
+        return submitTime
     }
 
     private func clean(_ value: String?) -> String? {
@@ -186,15 +191,18 @@ struct InlineImageResource: Sendable {
 }
 
 func embeddingInlineImages(in html: String, resources: [InlineImageResource]) -> String {
-    resources.reduce(html) { result, resource in
-        let dataURL = "data:\(resource.mimeType);base64,\(resource.data.base64EncodedString())"
-        return resource.references.reduce(result) { html, reference in
-            var html = html.replacingOccurrences(of: "cid:\(reference)", with: dataURL, options: .caseInsensitive)
+    // Match references against the small HTML using short tokens, then expand every token in one pass.
+    // Substituting megabyte data URLs directly rescans the growing HTML per reference (quadratic).
+    let marker = "\u{E000}\(UUID().uuidString)\u{E000}"
+    let tokenized = resources.indices.reduce(html) { result, index in
+        let token = "\(marker)\(index)\(marker)"
+        return resources[index].references.reduce(result) { html, reference in
+            var html = html.replacingOccurrences(of: "cid:\(reference)", with: token, options: .caseInsensitive)
             for quote in ["\"", "'"] {
                 for attribute in ["src", "background"] {
                     html = html.replacingOccurrences(
                         of: "\(attribute)=\(quote)\(reference)\(quote)",
-                        with: "\(attribute)=\(quote)\(dataURL)\(quote)",
+                        with: "\(attribute)=\(quote)\(token)\(quote)",
                         options: .caseInsensitive
                     )
                 }
@@ -202,4 +210,14 @@ func embeddingInlineImages(in html: String, resources: [InlineImageResource]) ->
             return html
         }
     }
+    // The marker contains a fresh UUID, so odd-numbered parts are always token indices.
+    var output = ""
+    for (position, part) in tokenized.components(separatedBy: marker).enumerated() {
+        if position % 2 == 1, let index = Int(part) {
+            output += "data:\(resources[index].mimeType);base64,\(resources[index].data.base64EncodedString())"
+        } else {
+            output += part
+        }
+    }
+    return output
 }

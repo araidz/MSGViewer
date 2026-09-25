@@ -40,6 +40,39 @@ import Testing
     #expect(html?.contains("<body>Hello <b>world</b></body>") == true)
 }
 
+@Test func ignoresOverflowingRTFControlNumbers() {
+    let rtf = #"{\rtf1\ansi\fromhtml1 {\*\htmltag19 <html>}\f99999999999999999999999 x{\*\htmltag27 </html>}}"#
+    #expect(RTFHTMLExtractor.extract(Data(rtf.utf8))?.contains("<html>") == true)
+}
+
+@Test func sanitizesUnwritableFilenames() {
+    #expect(safeFilename("..") == "Attachment")
+    #expect(safeFilename(" . ") == "Attachment")
+    #expect(safeFilename("a/b:c.pdf") == "a-b-c.pdf")
+    let long = safeFilename(String(repeating: "é", count: 300) + ".pdf")
+    #expect(long.utf8.count <= 240)
+    #expect(long.hasSuffix(".pdf"))
+}
+
+@Test func commandLineNeverBlocksOnBadArguments() throws {
+    let binary = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent(".build/debug/MSGViewer")
+    try #require(FileManager.default.isExecutableFile(atPath: binary.path))
+    for (arguments, expected) in [(["--help"], Int32(0)), (["x.msg", "--json"], 2), (["dump"], 2), (["dump", "/nonexistent.msg"], 1)] {
+        let process = Process()
+        process.executableURL = binary
+        process.arguments = arguments
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        let deadline = Date().addingTimeInterval(5)
+        while process.isRunning && Date() < deadline { usleep(20_000) }
+        if process.isRunning { process.terminate() }
+        #expect(!process.isRunning && process.terminationStatus == expected, "\(arguments)")
+    }
+}
+
 @Test func embedsInlineImagesWithoutTouchingRemoteImages() {
     let html = #"<img src="cid:logo"><img src="https://example.com/logo.png">"#
     let resource = InlineImageResource(references: ["logo"], mimeType: "image/png", data: Data([1, 2, 3]))
