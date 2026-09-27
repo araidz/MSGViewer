@@ -1,6 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <rect width="1024" height="1024" rx="210" fill="#f5efe2"/>
-  <path d="M92 190 512 530 932 190" fill="none" stroke="#c65f36" stroke-width="62" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M88 844 402 558M936 844 622 558" fill="none" stroke="#d8cdb9" stroke-width="46" stroke-linecap="round"/>
-  <path d="M662 330v270c0 102-67 174-150 174s-150-72-150-174V354c0-76 61-137 137-137s137 61 137 137v238c0 69-56 125-125 125s-125-56-125-125V402" transform="translate(0 16)" fill="none" stroke="#18354a" stroke-width="38" stroke-linecap="round"/>
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2f5475"/><stop offset="1" stop-color="#11263a"/></linearGradient>
+<linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".22"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<linearGradient id="paper" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fffaf0"/><stop offset="1" stop-color="#e9dcc4"/></linearGradient>
+<linearGradient id="clip" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f4f7fa"/><stop offset="1" stop-color="#9aabbb"/></linearGradient>
+</defs>
+<rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+<rect x="100" y="100" width="824" height="824" rx="185" fill="url(#sheen)"/>
+<rect x="101.5" y="101.5" width="821" height="821" rx="184" fill="none" stroke="#fff" stroke-opacity=".18" stroke-width="3"/>
+<rect x="236" y="352" width="560" height="400" rx="58" fill="#000" opacity=".18"/>
+<rect x="232" y="336" width="560" height="400" rx="58" fill="#000" opacity=".12"/>
+<rect x="232" y="322" width="560" height="400" rx="58" fill="url(#paper)"/>
+<path d="M276 682 440 546M748 682 584 546" fill="none" stroke="#d6c8ae" stroke-width="22" stroke-linecap="round"/>
+<path d="M270 366 512 556 754 366" fill="none" stroke="#c65f36" stroke-width="38" stroke-linecap="round" stroke-linejoin="round"/>
+<g transform="translate(700 250) rotate(28) scale(.42) translate(-512 -500)">
+<path d="M662 330v270c0 102-67 174-150 174s-150-72-150-174V354c0-76 61-137 137-137s137 61 137 137v238c0 69-56 125-125 125s-125-56-125-125V402" fill="none" stroke="#000" stroke-opacity=".25" stroke-width="70" stroke-linecap="round" transform="translate(10 18)"/>
+<path d="M662 330v270c0 102-67 174-150 174s-150-72-150-174V354c0-76 61-137 137-137s137 61 137 137v238c0 69-56 125-125 125s-125-56-125-125V402" fill="none" stroke="url(#clip)" stroke-width="62" stroke-linecap="round"/>
+</g>
 </svg>
