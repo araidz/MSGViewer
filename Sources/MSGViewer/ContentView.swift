@@ -3,7 +3,6 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @ObservedObject var store: MessageStore
-    @State private var isImporting = false
 
     var body: some View {
         Group {
@@ -17,20 +16,13 @@ struct ContentView: View {
                 } description: {
                     Text("Drop a .msg file here or choose one from Finder.")
                 } actions: {
-                    Button("Open Message...") { isImporting = true }
+                    Button("Open Message...") { (NSApp.delegate as? AppDelegate)?.showOpenPanel(replacing: store) }
                 }
             }
         }
         .dropDestination(for: URL.self) { urls, _ in
-            guard let url = urls.first else { return false }
-            store.open(url)
-            return true
-        }
-        .fileImporter(
-            isPresented: $isImporting,
-            allowedContentTypes: [.init(filenameExtension: "msg")!]
-        ) { result in
-            if case .success(let url) = result { store.open(url) }
+            (NSApp.delegate as? AppDelegate)?.open(urls, replacing: store)
+            return !urls.isEmpty
         }
         .alert("MSG Viewer", isPresented: Binding(
             get: { store.error != nil },
@@ -47,6 +39,7 @@ private struct MessageView: View {
     @ObservedObject var store: MessageStore
     let loaded: LoadedMessage
     @State private var recipientsExpanded = false
+    @State private var showHeaders = false
 
     var body: some View {
         HSplitView {
@@ -66,27 +59,27 @@ private struct MessageView: View {
                         Text(sender)
                             .font(.headline)
                         Spacer()
+                        if loaded.summary.headers != nil {
+                            Button("Headers") { showHeaders = true }
+                                .buttonStyle(.link)
+                                .controlSize(.small)
+                        }
                         if let date = loaded.summary.date {
                             Text(date.formatted(date: .abbreviated, time: .shortened))
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    if loaded.summary.recipientCount > 0 {
+                    if !recipientLines.isEmpty {
                         DisclosureGroup(isExpanded: $recipientsExpanded) {
                             ScrollView {
                                 VStack(alignment: .leading, spacing: 6) {
-                                    if let to = loaded.summary.to {
-                                        RecipientLine(label: "To", value: to)
-                                    }
-                                    if let cc = loaded.summary.cc {
-                                        RecipientLine(label: "Cc", value: cc)
-                                    }
+                                    ForEach(recipientLines, id: \.label) { RecipientLine(label: $0.label, value: $0.value) }
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .frame(maxHeight: 140)
                         } label: {
-                            Text("Recipients (\(loaded.summary.recipientCount))")
+                            Text(loaded.summary.recipientCount > 0 ? "Recipients (\(loaded.summary.recipientCount))" : "Recipients")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -126,12 +119,38 @@ private struct MessageView: View {
             .padding(14)
             .frame(minWidth: 260, idealWidth: 310, maxWidth: 380)
         }
-        .navigationTitle(loaded.displayName)
+        .sheet(isPresented: $showHeaders) { HeadersSheet(text: loaded.summary.headers ?? "") }
+    }
+
+    private var recipientLines: [(label: String, value: String)] {
+        Recipient.Kind.allCases.compactMap { kind in
+            loaded.summary.addresses(for: kind).map { (kind.label, $0) }
+        }
     }
 
     private var sender: String {
         let name = loaded.summary.senderName ?? "Unknown Sender"
         return loaded.summary.senderEmail.map { "\(name) <\($0)>" } ?? name
+    }
+}
+
+private struct HeadersSheet: View {
+    let text: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .trailing) {
+            ScrollView {
+                Text(text)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Button("Done") { dismiss() }
+                .keyboardShortcut(.defaultAction)
+        }
+        .padding()
+        .frame(width: 640, height: 420)
     }
 }
 
@@ -157,10 +176,16 @@ private struct AttachmentRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: attachment.isEmbeddedMessage ? "envelope" : "doc")
-                .font(.title3)
-                .frame(width: 24)
-                .foregroundStyle(.secondary)
+            if attachment.isEmbeddedMessage {
+                Image(systemName: "envelope")
+                    .font(.title3)
+                    .frame(width: 24)
+                    .foregroundStyle(.secondary)
+            } else {
+                Image(nsImage: NSWorkspace.shared.icon(for: UTType(filenameExtension: (attachment.name as NSString).pathExtension) ?? .data))
+                    .resizable()
+                    .frame(width: 24, height: 24)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(attachment.name)
                     .lineLimit(2)

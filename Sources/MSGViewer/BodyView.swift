@@ -12,12 +12,72 @@ struct BodyView: View {
         } else if let rtf = message.rtfBody {
             RTFView(rtf: rtf, isDark: colorScheme == .dark)
         } else {
-            ScrollView {
-                Text(message.plainBody ?? "No message body")
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(18)
-            }
+            // Rendered by the web view so find, print and zoom work for every body type.
+            let text = (message.plainBody ?? "No message body")
+                .replacingOccurrences(of: "&", with: "&amp;")
+                .replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: ">", with: "&gt;")
+            OfflineHTMLView(html: "<div style=\"white-space:pre-wrap\">\(text)</div>")
+        }
+    }
+}
+
+extension NSView {
+    /// The message body's web or text view somewhere inside a hosting view.
+    var bodyView: NSView? {
+        self is WKWebView || self is NSTextView ? self : subviews.lazy.compactMap(\.bodyView).first
+    }
+}
+
+extension MessageWindowController {
+    private var body: NSView? { window?.contentView?.bodyView }
+
+    func printBody() {
+        guard let body, let window else { return }
+        let operation: NSPrintOperation
+        if let web = body as? WKWebView {
+            operation = web.printOperation(with: .shared)
+            operation.view?.frame = web.bounds
+        } else {
+            operation = NSPrintOperation(view: body, printInfo: .shared)
+        }
+        operation.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
+    }
+
+    func showFind(_ sender: Any?) {
+        guard let body else { return }
+        // ponytail: WKWebView has no find bar on macOS, so HTML bodies get a prompt + ⌘G; replace with an in-window bar if this feels clumsy.
+        guard body is WKWebView else {
+            window?.makeFirstResponder(body)
+            body.performTextFinderAction(sender)
+            return
+        }
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = lastFind
+        let alert = NSAlert()
+        alert.messageText = "Find in Message"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Find")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        lastFind = field.stringValue
+        findNext()
+    }
+
+    func findNext() {
+        guard let web = body as? WKWebView, !lastFind.isEmpty else { return }
+        let query = lastFind
+        Task { if (try? await web.find(query))?.matchFound != true { NSSound.beep() } }
+    }
+
+    /// Multiplies the current zoom by `factor`; nil resets to 100%.
+    func zoom(by factor: CGFloat?) {
+        func apply(_ current: CGFloat) -> CGFloat { factor.map { min(3, max(0.5, current * $0)) } ?? 1 }
+        if let web = body as? WKWebView {
+            web.pageZoom = apply(web.pageZoom)
+        } else if let scrollView = (body as? NSTextView)?.enclosingScrollView {
+            scrollView.magnification = apply(scrollView.magnification)
         }
     }
 }
@@ -32,7 +92,9 @@ private struct RTFView: NSViewRepresentable {
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
+        scrollView.allowsMagnification = true
         let textView = NSTextView()
+        textView.usesFindBar = true
         textView.isEditable = false
         textView.isSelectable = true
         textView.drawsBackground = false
@@ -94,7 +156,7 @@ private struct OfflineHTMLView: NSViewRepresentable {
         guard context.coordinator.html != html else { return }
         context.coordinator.html = html
         let policy = "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; img-src data:\">"
-        let style = "<style>html{color-scheme:light dark}body{font:14px -apple-system;padding:18px;line-height:1.45;margin:0}table{max-width:100%;border-collapse:collapse}td,th{padding:3px}img{max-width:100%;height:auto}@media(prefers-color-scheme:dark){body,body *{color:#eee!important;background-color:transparent!important;border-color:#666!important}}</style>"
+        let style = "<style>html{color-scheme:light dark}body{font:14px -apple-system;padding:18px;line-height:1.45;margin:0}table{max-width:100%;border-collapse:collapse}td,th{padding:3px}img{max-width:100%;height:auto}@media screen and (prefers-color-scheme:dark){body,body *{color:#eee!important;background-color:transparent!important;border-color:#666!important}}</style>"
         view.loadHTMLString(policy + style + html, baseURL: nil)
     }
 
@@ -102,7 +164,13 @@ private struct OfflineHTMLView: NSViewRepresentable {
         var html: String?
 
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
-            navigationAction.navigationType == .other ? .allow : .cancel
+            // Links open in the default app; the web view itself never navigates, so it stays offline.
+            if navigationAction.navigationType == .linkActivated,
+               let url = navigationAction.request.url,
+               ["http", "https", "mailto"].contains(url.scheme?.lowercased()) {
+                NSWorkspace.shared.open(url)
+            }
+            return navigationAction.navigationType == .other ? .allow : .cancel
         }
     }
 }

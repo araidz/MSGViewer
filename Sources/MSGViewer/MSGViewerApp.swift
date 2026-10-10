@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 @main
@@ -25,6 +26,8 @@ final class MessageWindowController: NSWindowController, NSWindowDelegate {
     let store: MessageStore
     let sourceURL: URL?
     var didClose: ((MessageWindowController) -> Void)?
+    private var titleSubscription: AnyCancellable?
+    var lastFind = ""
 
     init(url: URL?) {
         sourceURL = url?.standardizedFileURL
@@ -41,6 +44,11 @@ final class MessageWindowController: NSWindowController, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.delegate = self
+        titleSubscription = store.$messages.sink { [weak window] messages in
+            MainActor.assumeIsolated {
+                if let loaded = messages.last { window?.title = loaded.summary.subject ?? loaded.displayName }
+            }
+        }
         if let url { store.open(url) }
     }
 
@@ -68,12 +76,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    @objc func showOpenPanel() {
+    @objc func showOpenPanel() { showOpenPanel(replacing: keyController?.store) }
+
+    func showOpenPanel(replacing store: MessageStore?) {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.init(filenameExtension: "msg")!]
         panel.allowsMultipleSelection = true
-        if panel.runModal() == .OK {
-            panel.urls.forEach(openWindow)
+        if panel.runModal() == .OK { open(panel.urls, replacing: store) }
+    }
+
+    /// Opens each file in its own window; an empty window that asked for them is closed afterwards.
+    func open(_ urls: [URL], replacing store: MessageStore?) {
+        urls.forEach(openWindow)
+        if let store, store.message == nil, !store.isLoading,
+           let empty = windows.first(where: { $0.store === store }) {
+            empty.close()
         }
     }
 
@@ -88,20 +105,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func installMainMenu() {
         let main = NSMenu()
-        let appItem = NSMenuItem()
-        let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "Quit MSG Viewer", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        appItem.submenu = appMenu
-        main.addItem(appItem)
+        func addMenu(_ title: String, _ build: (NSMenu) -> Void) {
+            let item = NSMenuItem()
+            let menu = NSMenu(title: title)
+            build(menu)
+            item.submenu = menu
+            main.addItem(item)
+        }
 
-        let fileItem = NSMenuItem()
-        let fileMenu = NSMenu(title: "File")
-        let openItem = fileMenu.addItem(withTitle: "Open Message...", action: #selector(showOpenPanel), keyEquivalent: "o")
-        openItem.target = self
-        fileMenu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
-        fileItem.submenu = fileMenu
-        main.addItem(fileItem)
+        addMenu("MSG Viewer") {
+            $0.addItem(withTitle: "Quit MSG Viewer", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        }
+        addMenu("File") { menu in
+            menu.addItem(withTitle: "Open Message...", action: #selector(showOpenPanel as () -> Void), keyEquivalent: "o").target = self
+            let recent = NSMenu(title: "Open Recent")
+            recent.delegate = self
+            let recentItem = menu.addItem(withTitle: "Open Recent", action: nil, keyEquivalent: "")
+            recentItem.submenu = recent
+            menu.addItem(.separator())
+            menu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+            menu.addItem(.separator())
+            menu.addItem(withTitle: "Print...", action: #selector(printMessage), keyEquivalent: "p").target = self
+        }
+        addMenu("Edit") { menu in
+            menu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+            menu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+            menu.addItem(.separator())
+            let find = menu.addItem(withTitle: "Find...", action: #selector(showFind(_:)), keyEquivalent: "f")
+            find.target = self
+            find.tag = NSTextFinder.Action.showFindInterface.rawValue
+            menu.addItem(withTitle: "Find Next", action: #selector(findNext), keyEquivalent: "g").target = self
+        }
+        addMenu("View") { menu in
+            menu.addItem(withTitle: "Zoom In", action: #selector(zoomIn), keyEquivalent: "+").target = self
+            menu.addItem(withTitle: "Zoom Out", action: #selector(zoomOut), keyEquivalent: "-").target = self
+            menu.addItem(withTitle: "Actual Size", action: #selector(zoomReset), keyEquivalent: "0").target = self
+        }
+        addMenu("Window") { menu in
+            menu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+            menu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+            NSApp.windowsMenu = menu
+        }
         NSApp.mainMenu = main
+    }
+
+    private var keyController: MessageWindowController? { windows.first { $0.window === NSApp.keyWindow } }
+    @objc private func printMessage() { keyController?.printBody() }
+    @objc private func showFind(_ sender: Any?) { keyController?.showFind(sender) }
+    @objc private func findNext() { keyController?.findNext() }
+    @objc private func zoomIn() { keyController?.zoom(by: 1.25) }
+    @objc private func zoomOut() { keyController?.zoom(by: 0.8) }
+    @objc private func zoomReset() { keyController?.zoom(by: nil) }
+
+    @objc private func openRecent(_ item: NSMenuItem) {
+        if let url = item.representedObject as? URL { openWindow(url) }
     }
 
     private func openWindow(_ url: URL?) {
@@ -118,13 +175,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if let previous = windows.last?.window {
             controller.window?.setFrameTopLeftPoint(NSPoint(x: previous.frame.minX + 24, y: previous.frame.maxY - 24))
-        } else {
-            controller.window?.center()
+        } else if let window = controller.window {
+            // Only the first window is remembered; the rest cascade from it.
+            if !window.setFrameUsingName("MSGViewer") { window.center() }
+            window.setFrameAutosaveName("MSGViewer")
         }
         windows.append(controller)
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+extension AppDelegate: NSMenuDelegate {
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        for url in NSDocumentController.shared.recentDocumentURLs {
+            let item = menu.addItem(withTitle: url.lastPathComponent, action: #selector(openRecent(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = url
+        }
+        menu.addItem(.separator())
+        let clear = menu.addItem(withTitle: "Clear Menu", action: #selector(NSDocumentController.clearRecentDocuments(_:)), keyEquivalent: "")
+        clear.target = NSDocumentController.shared
     }
 }
 
@@ -214,8 +287,9 @@ private func dump(_ parser: MSGParser, into output: URL, depth: Int) throws {
     print("Sender: \(message.senderName ?? "")")
     print("Sender email: \(message.senderEmail ?? "")")
     print("Date: \(message.date?.description ?? "")")
-    print("To: \(message.to ?? "")")
-    print("Cc: \(message.cc ?? "")")
+    print("To: \(message.addresses(for: .to) ?? "")")
+    print("Cc: \(message.addresses(for: .cc) ?? "")")
+    if let bcc = message.addresses(for: .bcc) { print("Bcc: \(bcc)") }
     print("Recipients: \(message.recipientCount)")
     let body = message.plainBody ?? message.htmlBody ?? message.rtfBody ?? ""
     print("\n--- BODY ---")
@@ -230,6 +304,12 @@ private func dump(_ parser: MSGParser, into output: URL, depth: Int) throws {
         let destination = uniqueURL(in: output, filename: "body.html")
         try Data(html.utf8).write(to: destination, options: .atomic)
         print("HTML body: \(destination.path)")
+    }
+
+    if let headers = message.headers {
+        let destination = uniqueURL(in: output, filename: "headers.txt")
+        try Data(headers.utf8).write(to: destination, options: .atomic)
+        print("Headers file: \(destination.path)")
     }
 
     let attachments = message.attachments.filter { !$0.isEmbeddedMessage }

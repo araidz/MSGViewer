@@ -125,6 +125,24 @@ private func fixture(_ nodes: [CFBNode], mutate: (inout [CFBEntry]) -> Void = { 
     #expect(Date().timeIntervalSince(start) < 4)
 }
 
+@Test func parsesRecipientsAndHeaders() throws {
+    let url = try fixture(CFBNode.message(subject: "S", body: "B", extra: [
+        .recipient(index: 0, name: "Alice", email: "alice@example.com", kind: 1),
+        .recipient(index: 1, name: "Bob", email: "bob@example.com", kind: 2),
+        .recipient(index: 2, name: "Carol", email: "carol@example.com", kind: 3),
+        .utf16("__substg1.0_007D001F", "Received: from mx\r\nX-Test: 1" + CFBNode.pad),
+    ]))
+    let message = try MSGParser(data: Data(contentsOf: url)).parse()
+    #expect(message.recipientCount == 3)
+    #expect(message.addresses(for: .to) == "Alice <alice@example.com>")
+    #expect(message.addresses(for: .cc) == "Bob <bob@example.com>")
+    #expect(message.addresses(for: .bcc) == "Carol <carol@example.com>")
+    #expect(message.headers == "Received: from mx\r\nX-Test: 1")
+
+    let result = try runCLI(["dump", url.path, "--output", url.deletingPathExtension().path])
+    #expect(result.stdout.contains("Bcc: Carol <carol@example.com>"))
+}
+
 @Test func embedsInlineImagesWithoutTouchingRemoteImages() {
     let html = #"<img src="cid:logo"><img src="https://example.com/logo.png">"#
     let resource = InlineImageResource(references: ["logo"], mimeType: "image/png", data: Data([1, 2, 3]))

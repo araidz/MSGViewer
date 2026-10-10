@@ -20,9 +20,24 @@ indirect enum CFBNode {
         .stream(name, text.data(using: .utf16LittleEndian)!)
     }
 
+    /// Spaces (trimmed by the parser) that push a UTF-16 stream past the 4096-byte mini-stream cutoff.
+    static let pad = String(repeating: " ", count: 2100)
+
     static func message(subject: String, body: String, extra: [CFBNode] = []) -> [CFBNode] {
-        let pad = String(repeating: " ", count: 2100)
-        return [utf16("__substg1.0_0037001F", subject + pad), utf16("__substg1.0_1000001F", body + pad)] + extra
+        [utf16("__substg1.0_0037001F", subject + pad), utf16("__substg1.0_1000001F", body + pad)] + extra
+    }
+
+    /// `kind` is PR_RECIPIENT_TYPE: 1 To, 2 Cc, 3 Bcc.
+    static func recipient(index: Int, name: String, email: String, kind: UInt32) -> CFBNode {
+        var properties = Data(count: 4200)
+        for (offset, value) in [(8, UInt32(0x0C15_0003)), (12, 1), (16, kind)] {
+            properties.replaceSubrange(offset..<(offset + 4), with: withUnsafeBytes(of: value.littleEndian, Array.init))
+        }
+        return .storage(String(format: "__recip_version1.0_#%08X", index), [
+            utf16("__substg1.0_3001001F", name + pad),
+            utf16("__substg1.0_39FE001F", email + pad),
+            .stream("__properties_version1.0", properties),
+        ])
     }
 
     static func attachedMessage(index: Int, _ children: [CFBNode]) -> CFBNode {

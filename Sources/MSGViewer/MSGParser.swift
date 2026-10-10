@@ -20,11 +20,38 @@ struct MessageSummary: Sendable {
     let date: Date?
     let to: String?
     let cc: String?
-    let recipientCount: Int
+    let recipients: [Recipient]
+    let headers: String?
     let plainBody: String?
     let htmlBody: String?
     let rtfBody: String?
     let attachments: [Attachment]
+
+    var recipientCount: Int { recipients.count }
+
+    /// "Name <email>" entries of one kind; falls back to the display strings when the message has no recipient table.
+    func addresses(for kind: Recipient.Kind) -> String? {
+        let list = recipients.filter { $0.kind == kind }.map(\.display)
+        guard list.isEmpty else { return list.joined(separator: "; ") }
+        return kind == .to ? to : kind == .cc ? cc : nil
+    }
+}
+
+struct Recipient: Sendable {
+    enum Kind: Int, CaseIterable, Sendable {
+        case to = 1, cc, bcc
+
+        var label: String { ["To", "Cc", "Bcc"][rawValue - 1] }
+    }
+
+    let name: String?
+    let email: String?
+    let kind: Kind
+
+    var display: String {
+        guard let email, email != name else { return name ?? "Unknown" }
+        return name.map { "\($0) <\(email)>" } ?? email
+    }
 }
 
 struct MSGParser: Sendable {
@@ -44,7 +71,10 @@ struct MSGParser: Sendable {
     func parse() throws -> MessageSummary {
         let root = rootIndex
         let rootChildren = try childMap(of: root)
-        let recipientCount = rootChildren.values.count { $0.1.name.hasPrefix("__recip_version1.0_#") }
+        let recipients = try rootChildren.values
+            .filter { $0.1.name.hasPrefix("__recip_version1.0_#") }
+            .sorted { $0.1.name < $1.1.name }
+            .map { try recipient(at: $0.0) }
         let attachmentFolders = rootChildren.values
             .filter { $0.1.name.hasPrefix("__attach_version1.0_#") }
             .sorted { $0.1.name < $1.1.name }
@@ -97,7 +127,8 @@ struct MSGParser: Sendable {
             date: try messageDate(of: root, in: rootChildren),
             to: try stringProperty(id: "0E04", in: rootChildren),
             cc: try stringProperty(id: "0E03", in: rootChildren),
-            recipientCount: recipientCount,
+            recipients: recipients,
+            headers: try stringProperty(id: "007D", in: rootChildren),
             plainBody: try stringProperty(id: "1000", in: rootChildren),
             htmlBody: rawHTML.map { embeddingInlineImages(in: $0, resources: resources) },
             rtfBody: clean(rtfData.flatMap { String(data: $0, encoding: .windowsCP1252) }),
@@ -153,6 +184,26 @@ struct MSGParser: Sendable {
     private func rtfProperty(in children: ChildMap) throws -> Data? {
         guard let (_, entry) = propertyEntry(id: "1009", type: "0102", in: children) else { return nil }
         return try CompressedRTF.decompress(file.stream(entry))
+    }
+
+    private func recipient(at index: Int) throws -> Recipient {
+        let children = try childMap(of: index)
+        // 3003 is an Exchange DN (not an address) for internal users, so only trust it when it looks like one.
+        let email = try stringProperty(id: "39FE", in: children)
+            ?? stringProperty(id: "3003", in: children).flatMap { $0.contains("@") ? $0 : nil }
+        return Recipient(name: try stringProperty(id: "3001", in: children), email: email, kind: try recipientKind(in: children))
+    }
+
+    /// PR_RECIPIENT_TYPE (0C15, int32) lives in the recipient's property stream; 8-byte header, 16-byte entries.
+    private func recipientKind(in children: ChildMap) throws -> Recipient.Kind {
+        guard let (_, entry) = children["__PROPERTIES_VERSION1.0"] else { return .to }
+        let data = try file.stream(entry)
+        for offset in stride(from: 8, through: data.count - 16, by: 16) {
+            if try data.u32(at: offset) == 0x0C15_0003 {
+                return Recipient.Kind(rawValue: Int(try data.u32(at: offset + 8))) ?? .to
+            }
+        }
+        return .to
     }
 
     private func messageDate(of parent: Int, in children: ChildMap) throws -> Date? {
